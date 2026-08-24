@@ -1,0 +1,157 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Models;
+
+use App\Enums\UserRole;
+use App\Observers\UserObserver;
+use Database\Factories\UserFactory;
+use Filament\Models\Contracts\FilamentUser;
+use Filament\Models\Contracts\HasTenants;
+use Filament\Panel;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+use Spatie\Permission\Traits\HasRoles;
+
+/**
+ * @property int         $id
+ * @property ?int        $tenant_id
+ * @property ?int        $office_id
+ * @property string      $name
+ * @property string      $email
+ * @property ?string     $phone
+ * @property string      $password
+ * @property ?string     $google2fa_secret
+ * @property bool        $google2fa_enabled
+ * @property ?string     $device_fingerprint
+ * @property ?string     $last_login_ip
+ * @property bool        $active
+ */
+#[ObservedBy([UserObserver::class])]
+class User extends Authenticatable implements FilamentUser, HasTenants
+{
+    /** @use HasFactory<UserFactory> */
+    use HasFactory;
+    use HasRoles;
+    use Notifiable;
+    use SoftDeletes;
+
+    protected $fillable = [
+        'tenant_id', 'office_id',
+        'name', 'email', 'phone', 'password',
+        'google2fa_secret', 'google2fa_enabled',
+        'device_fingerprint', 'last_login_ip', 'last_login_at', 'active',
+    ];
+
+    protected $hidden = ['password', 'remember_token', 'google2fa_secret'];
+
+    protected function casts(): array
+    {
+        return [
+            'email_verified_at'  => 'datetime',
+            'last_login_at'      => 'datetime',
+            'password'           => 'hashed',
+            'google2fa_secret'   => 'encrypted',
+            'google2fa_enabled'  => 'boolean',
+            'active'             => 'boolean',
+        ];
+    }
+
+    // ── Relationships ────────────────────────────────────────────────
+
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class);
+    }
+
+    public function office(): BelongsTo
+    {
+        return $this->belongsTo(Office::class);
+    }
+
+    /**
+     * Offices this user manages as a supervisor — a supervisor can be
+     * responsible for more than one office (unlike an employee, who
+     * belongs to exactly one via office_id above).
+     */
+    public function managedOffices(): HasMany
+    {
+        return $this->hasMany(Office::class, 'manager_id');
+    }
+
+    // ── Role helpers ─────────────────────────────────────────────────
+
+    public function isSuperAdmin(): bool
+    {
+        return $this->hasRole(UserRole::SuperAdmin->value);
+    }
+
+    public function isTenantOwner(): bool
+    {
+        return $this->hasRole(UserRole::TenantOwner->value);
+    }
+
+    public function isManager(): bool
+    {
+        return $this->hasRole(UserRole::Manager->value);
+    }
+
+    /**
+     * Convenience predicate for the many places that treat owner + manager
+     * as "administrators" of the tenant (uploading accounts, managing
+     * offices, creating users, etc.).
+     */
+    public function isTenantOwnerOrManager(): bool
+    {
+        return $this->hasRole([
+            UserRole::TenantOwner->value,
+            UserRole::Manager->value,
+        ]);
+    }
+
+    public function isSupervisor(): bool
+    {
+        return $this->hasRole(UserRole::Supervisor->value);
+    }
+
+    public function isEmployee(): bool
+    {
+        return $this->hasRole(UserRole::Employee->value);
+    }
+
+    // ── Filament panel access ────────────────────────────────────────
+
+    public function canAccessPanel(Panel $panel): bool
+    {
+        if (! $this->active) {
+            return false;
+        }
+
+        return match ($panel->getId()) {
+            'admin' => $this->isSuperAdmin(),
+            'app'   => $this->tenant_id !== null && ! $this->isSuperAdmin()
+                && $this->tenant?->status !== 'suspended',
+            default => false,
+        };
+    }
+
+    // ── Filament multi-tenancy (HasTenants) ─────────────────────────
+
+    public function getTenants(Panel $panel): Collection|array
+    {
+        return $this->tenant ? Collection::make([$this->tenant]) : [];
+    }
+
+    public function canAccessTenant(Model $tenant): bool
+    {
+        return $tenant instanceof Tenant && $tenant->id === $this->tenant_id;
+    }
+}
