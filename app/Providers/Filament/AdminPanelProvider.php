@@ -58,9 +58,8 @@ class AdminPanelProvider extends PanelProvider
             ->authMiddleware([
                 Authenticate::class,
                 // 2FA temporarily disabled for development convenience.
-                // Re-enable by uncommenting these two lines:
-                // '2fa.enrolled',
-                // '2fa',
+                '2fa.enrolled',
+                '2fa',
             ]);
     }
 }
