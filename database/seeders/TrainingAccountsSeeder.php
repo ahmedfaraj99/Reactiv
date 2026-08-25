@@ -26,7 +26,15 @@ class TrainingAccountsSeeder extends Seeder
 
     public function run(): void
     {
-        $tenant = Tenant::where('slug', 'demo')->firstOrFail();
+        // Pick the tenant to seed under: env override wins, then 'main',
+        // then 'demo', then the first tenant that exists. Keeps the seeder
+        // portable between production ('main') and local dev ('demo').
+        $slug = env('TRAINING_TENANT_SLUG');
+        $tenant = $slug
+            ? Tenant::where('slug', $slug)->firstOrFail()
+            : (Tenant::where('slug', 'main')->first()
+                ?? Tenant::where('slug', 'demo')->first()
+                ?? Tenant::orderBy('id')->firstOrFail());
 
         $uploader = User::where('tenant_id', $tenant->id)
             ->orderBy('id')
