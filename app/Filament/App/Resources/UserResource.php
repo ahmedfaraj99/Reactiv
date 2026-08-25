@@ -172,7 +172,23 @@ class UserResource extends Resource
                         ->label('المكتب')
                         ->relationship('office', 'name', function (Builder $query): Builder {
                             $tenant = filament()->getTenant();
-                            return $tenant ? $query->where('tenant_id', $tenant->id) : $query->whereRaw('1=0');
+                            if ($tenant === null) {
+                                return $query->whereRaw('1=0');
+                            }
+
+                            $query->where('tenant_id', $tenant->id);
+
+                            // Scope the picker to the caller's own turf so
+                            // a manager can't attach a new supervisor to
+                            // another manager's office by picking it here.
+                            $u = auth()->user();
+                            if ($u?->isManager()) {
+                                $query->whereIn('id', $u->managedOffices()->pluck('id'));
+                            } elseif ($u?->isSupervisor() && $u->office_id !== null) {
+                                $query->where('id', $u->office_id);
+                            }
+
+                            return $query;
                         })
                         ->searchable()
                         ->preload()
