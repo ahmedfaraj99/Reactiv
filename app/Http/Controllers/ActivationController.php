@@ -26,7 +26,7 @@ class ActivationController extends Controller
     public function show(User $user)
     {
         if ($user->email_verified_at !== null) {
-            return redirect(filament()->getPanel('app')->getLoginUrl())
+            return redirect()->to(filament()->getPanel('app')->getLoginUrl() ?? '/admin/login')
                 ->with('status', 'الحساب مفعّل بالفعل. سجل الدخول بكلمة السر التي اخترتها.');
         }
 
@@ -36,7 +36,7 @@ class ActivationController extends Controller
     public function store(User $user, Request $request)
     {
         if ($user->email_verified_at !== null) {
-            return redirect(filament()->getPanel('app')->getLoginUrl())
+            return redirect()->to(filament()->getPanel('app')->getLoginUrl() ?? '/admin/login')
                 ->with('status', 'الحساب مفعّل بالفعل.');
         }
 
@@ -53,7 +53,7 @@ class ActivationController extends Controller
             'active'            => true,
         ])->save();
 
-        return redirect(filament()->getPanel('app')->getLoginUrl())
+        return redirect()->to(filament()->getPanel('app')->getLoginUrl() ?? '/admin/login')
             ->with('status', 'تم تفعيل الحساب. يمكنك الآن تسجيل الدخول.');
     }
 }
