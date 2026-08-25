@@ -87,4 +87,9 @@ class Tenant extends Model implements HasName
     {
         return $this->hasMany(Office::class);
     }
+
+    public function clients(): HasMany
+    {
+        return $this->hasMany(Client::class);
+    }
 }
