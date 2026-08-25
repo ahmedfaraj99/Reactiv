@@ -152,9 +152,13 @@ class UserResource extends Resource
                         ->password()
                         ->revealable()
                         ->minLength(8)
-                        ->required(fn (string $operation): bool => $operation === 'create')
+                        // On CREATE: no password field — the user sets it
+                        // themselves via the emailed activation link. On
+                        // EDIT: still available so managers can force-reset
+                        // a password for a locked-out user.
+                        ->visible(fn (string $operation): bool => $operation === 'edit')
                         ->dehydrated(fn (?string $state): bool => filled($state))
-                        ->helperText('اتركها فارغة عند التعديل لعدم التغيير'),
+                        ->helperText('اتركها فارغة لعدم التغيير'),
                 ]),
 
             Forms\Components\Section::make('الدور والمكتب')
@@ -220,6 +224,18 @@ class UserResource extends Resource
                     ->placeholder('—')
                     ->sortable(),
 
+                Tables\Columns\IconColumn::make('email_verified_at')
+                    ->label('مُفعَّل')
+                    ->boolean()
+                    ->getStateUsing(fn (User $record): bool => $record->email_verified_at !== null)
+                    ->trueIcon('heroicon-o-check-badge')
+                    ->trueColor('success')
+                    ->falseIcon('heroicon-o-clock')
+                    ->falseColor('warning')
+                    ->tooltip(fn (User $record): string => $record->email_verified_at !== null
+                        ? 'المستخدم فعّل حسابه'
+                        : 'دعوة معلّقة — لم يفتح رابط التفعيل بعد'),
+
                 Tables\Columns\IconColumn::make('active')
                     ->label('نشط')
                     ->boolean(),
@@ -253,6 +269,29 @@ class UserResource extends Resource
             ])
             ->actions([
                 Tables\Actions\EditAction::make()->label('تعديل'),
+                Tables\Actions\Action::make('resend_invitation')
+                    ->label('إعادة إرسال دعوة')
+                    ->icon('heroicon-o-envelope')
+                    ->color('primary')
+                    ->requiresConfirmation()
+                    ->modalDescription('سيتم إرسال رابط تفعيل جديد صالح 72 ساعة إلى بريد المستخدم.')
+                    ->visible(fn (User $record): bool => $record->email_verified_at === null)
+                    ->action(function (User $record): void {
+                        try {
+                            $record->notify(new \App\Notifications\UserActivationInvitation);
+                            \Filament\Notifications\Notification::make()
+                                ->title('تم إرسال الدعوة')
+                                ->body('تحقق من بريد '.$record->email)
+                                ->success()
+                                ->send();
+                        } catch (\Throwable $e) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('فشل إرسال الدعوة')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
+                    }),
                 Tables\Actions\Action::make('reset_2fa')
                     ->label('إعادة تعيين 2FA')
                     ->icon('heroicon-o-shield-exclamation')

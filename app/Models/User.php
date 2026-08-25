@@ -135,6 +135,15 @@ class User extends Authenticatable implements FilamentUser, HasTenants
             return false;
         }
 
+        // Freshly-created users must click the activation link in their
+        // invitation email before they can log in — even guessing the
+        // random placeholder password gets them nowhere while this is
+        // null. Owners bypassing this via seeding are handled by the
+        // seeder stamping email_verified_at explicitly.
+        if ($this->email_verified_at === null) {
+            return false;
+        }
+
         return match ($panel->getId()) {
             'admin' => $this->isSuperAdmin(),
             'app'   => $this->tenant_id !== null && ! $this->isSuperAdmin()

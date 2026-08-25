@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\ActivationController;
 use App\Http\Controllers\Auth\TwoFactorSetupController;
 use App\Http\Controllers\Auth\TwoFactorVerifyController;
 use App\Http\Controllers\ProofController;
@@ -46,6 +47,15 @@ Route::get('/health/deep', function () {
 
     return response()->json(['status' => $allOk ? 'ok' : 'fail', 'checks' => $checks], $allOk ? 200 : 503);
 })->middleware('throttle:6,1');
+
+// Public activation flow — 'signed' middleware validates the URL
+// signature and expiry stamped in via URL::temporarySignedRoute in
+// UserActivationInvitation. No auth required; the signature IS the
+// credential.
+Route::middleware('signed')->group(function (): void {
+    Route::get('/activate/{user}', [ActivationController::class, 'show'])->name('activation.show');
+    Route::post('/activate/{user}', [ActivationController::class, 'store'])->name('activation.store');
+});
 
 Route::middleware(['web', 'auth'])->group(function (): void {
     Route::get('/2fa/setup', [TwoFactorSetupController::class, 'show'])->name('2fa.setup.show');
