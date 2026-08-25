@@ -25,7 +25,11 @@
         <h1>تفعيل الحساب</h1>
         <p class="subtitle">مرحباً {{ $user->name }} — اختر كلمة سر جديدة لتفعيل حسابك.</p>
 
-        <form method="POST" action="{{ url()->current() }}">
+        {{-- request()->fullUrl() preserves the ?expires=…&signature=… query
+             string. url()->current() (or route()) strips it, which makes
+             the POST bounce off the 'signed' middleware silently and the
+             user sees the form seem to "not do anything". --}}
+        <form method="POST" action="{{ request()->fullUrl() }}">
             @csrf
 
             <div class="field">

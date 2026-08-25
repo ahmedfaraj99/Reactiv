@@ -38,6 +38,17 @@ class UnifiedLogin extends Login
 
         if (! $user instanceof FilamentUser || ! $this->canAccessAnyPanel($user)) {
             Filament::auth()->logout();
+
+            // Password matched (attempt() succeeded) but the user can't
+            // enter any panel. Distinguish the "pending invitation" case
+            // from generic access denial so the person knows what to do
+            // instead of blaming the password.
+            if ($user instanceof User && $user->email_verified_at === null) {
+                throw ValidationException::withMessages([
+                    'data.email' => 'حسابك لم يُفعَّل بعد. افتح رابط التفعيل في بريدك، أو اطلب من مديرك إعادة إرسال دعوة.',
+                ]);
+            }
+
             $this->throwFailureValidationException();
         }
 
