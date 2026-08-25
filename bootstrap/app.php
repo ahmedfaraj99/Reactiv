@@ -25,6 +25,14 @@ return Application::configure(basePath: dirname(__DIR__))
         // sees a value, and no device ever gets bound.
         $middleware->encryptCookies(except: ['fc_fp']);
 
+        // Nginx terminates TLS and forwards the request to PHP as HTTP.
+        // Without trusting the reverse proxy, Laravel sees the request as
+        // insecure — signed URLs generated as https:// then fail their
+        // signature check because the validator recomputes with http://.
+        // Trust any proxy since this host only receives traffic from its
+        // own local Nginx.
+        $middleware->trustProxies(at: '*');
+
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
