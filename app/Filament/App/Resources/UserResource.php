@@ -132,7 +132,15 @@ class UserResource extends Resource
                         ->label('البريد الإلكتروني')
                         ->email()
                         ->required()
-                        ->unique(ignoreRecord: true),
+                        // Soft-deleted rows keep the email column populated,
+                        // so the default unique rule blocks re-adding a
+                        // supervisor a manager just deleted. Skip
+                        // soft-deleted rows here — matches the partial
+                        // unique index the migration installs on the DB.
+                        ->unique(
+                            ignoreRecord: true,
+                            modifyRuleUsing: fn ($rule) => $rule->whereNull('deleted_at'),
+                        ),
 
                     Forms\Components\TextInput::make('phone')
                         ->label('رقم الهاتف')
