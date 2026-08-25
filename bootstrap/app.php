@@ -19,6 +19,12 @@ return Application::configure(basePath: dirname(__DIR__))
             'device.fp'    => \App\Http\Middleware\BindDeviceFingerprint::class,
         ]);
 
+        // The device fingerprint cookie is set client-side by JS (plain
+        // text), so it must be excluded from Laravel's cookie encryption —
+        // otherwise the decrypt fails silently and the middleware never
+        // sees a value, and no device ever gets bound.
+        $middleware->encryptCookies(except: ['fc_fp']);
+
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
