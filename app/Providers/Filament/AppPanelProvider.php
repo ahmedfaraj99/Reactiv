@@ -44,6 +44,7 @@ class AppPanelProvider extends PanelProvider
             ->sidebarCollapsibleOnDesktop()
             ->tenant(Tenant::class, slugAttribute: 'slug')
             ->tenantRoutePrefix('t')
+            ->profile(isSimple: false)
             ->discoverResources(in: app_path('Filament/App/Resources'), for: 'App\\Filament\\App\\Resources')
             ->discoverPages(in: app_path('Filament/App/Pages'), for: 'App\\Filament\\App\\Pages')
             ->pages([
