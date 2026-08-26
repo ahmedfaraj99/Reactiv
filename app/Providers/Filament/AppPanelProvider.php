@@ -78,6 +78,14 @@ class AppPanelProvider extends PanelProvider
                 fn (): string => view('partials.device-fingerprint')->render(),
             )
             ->renderHook(
+                // Home-screen install nudge (Chromium button + iOS hint).
+                // Rendered at BODY_END so the manifest link in <head> has
+                // definitely been parsed by the time the beforeinstallprompt
+                // listener attaches. Self-throttled via localStorage.
+                \Filament\View\PanelsRenderHook::BODY_END,
+                fn (): string => view('partials.pwa-install-prompt')->render(),
+            )
+            ->renderHook(
                 // Load our app.js (Echo + Reverb bootstrap) into every
                 // panel page so Livewire components can subscribe to
                 // broadcast channels via $listeners. Rendered at BODY_END
@@ -96,6 +104,13 @@ class AppPanelProvider extends PanelProvider
                 // dismissable: the point is that nobody misses it.
                 \Filament\View\PanelsRenderHook::CONTENT_START,
                 fn (): string => view('partials.emergency-freeze-banner')->render(),
+            )
+            ->renderHook(
+                // Manager/owner broadcasts (maintenance windows,
+                // announcements). Rendered after the freeze banner so
+                // the harder-stop message always sits at the very top.
+                \Filament\View\PanelsRenderHook::CONTENT_START,
+                fn (): string => view('partials.office-broadcast-banner')->render(),
             );
     }
 }
