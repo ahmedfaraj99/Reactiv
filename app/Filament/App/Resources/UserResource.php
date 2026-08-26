@@ -114,6 +114,16 @@ class UserResource extends Resource
             $query->where('office_id', $u->office_id);
         }
 
+        // Correlated subquery for the "آخر نشاط" column — one scan of
+        // reveal_logs per row rendered instead of a JOIN that would
+        // duplicate rows or need a GROUP BY. reveal_logs is indexed on
+        // user_id, so the MAX() collapses to an index probe.
+        $query->addSelect([
+            'last_activity_at' => \App\Models\RevealLog::query()
+                ->selectRaw('MAX(created_at)')
+                ->whereColumn('reveal_logs.user_id', 'users.id'),
+        ]);
+
         return $query;
     }
 
@@ -268,7 +278,37 @@ class UserResource extends Resource
                     ->label('آخر دخول')
                     ->dateTime('Y-m-d H:i')
                     ->placeholder('لم يدخل بعد')
-                    ->sortable(),
+                    ->sortable()
+                    ->toggleable(),
+
+                // Last time this user did anything sensitive (revealed
+                // credentials, generated a TOTP, submitted a proof).
+                // Beats last_login_at for "is this person working right
+                // now?" — someone logged in yesterday morning but idle
+                // since noon reads as "at desk" here even though
+                // they're not doing anything.
+                Tables\Columns\TextColumn::make('last_activity_at')
+                    ->label('آخر نشاط')
+                    ->dateTime('Y-m-d H:i')
+                    ->since()
+                    ->placeholder('لا نشاط')
+                    ->sortable()
+                    ->badge()
+                    ->color(function (?string $state): string {
+                        if ($state === null) {
+                            return 'gray';
+                        }
+                        $minutes = now()->diffInMinutes(\Illuminate\Support\Carbon::parse($state));
+                        return match (true) {
+                            $minutes <= 5   => 'success',
+                            $minutes <= 30  => 'warning',
+                            $minutes <= 240 => 'gray',
+                            default         => 'gray',
+                        };
+                    })
+                    ->icon(fn (?string $state): ?string => $state !== null
+                        && now()->diffInMinutes(\Illuminate\Support\Carbon::parse($state)) <= 5
+                        ? 'heroicon-m-signal' : null),
 
                 Tables\Columns\IconColumn::make('device_fingerprint')
                     ->label('جهاز مربوط')

@@ -502,6 +502,107 @@ class AccountResource extends Resource
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
+                    // Fast redistribution for the everyday case: an
+                    // employee is out, or a supervisor wants to spread
+                    // a big batch across the whole team in one shot.
+                    // Only touches rows that haven't been opened yet —
+                    // once credentials have been revealed to an
+                    // employee, moving the account without their
+                    // knowledge would strand them mid-activation and
+                    // leak the account to a second person.
+                    Tables\Actions\BulkAction::make('reassign_bulk')
+                        ->label('إعادة تخصيص')
+                        ->icon('heroicon-o-user-group')
+                        ->color('primary')
+                        ->visible(fn (): bool => auth()->user()?->isManager() || auth()->user()?->isSupervisor())
+                        ->form([
+                            Forms\Components\Radio::make('mode')
+                                ->label('طريقة التوزيع')
+                                ->options([
+                                    'single' => 'كل الحسابات المحددة لموظف واحد',
+                                    'split'  => 'توزيع بالتساوي على عدة موظفين',
+                                ])
+                                ->default('single')
+                                ->live()
+                                ->required(),
+
+                            Forms\Components\Select::make('employee_id')
+                                ->label('الموظف')
+                                ->options(fn (): array => self::employeeOptions())
+                                ->searchable()
+                                ->preload()
+                                ->visible(fn (Forms\Get $get): bool => $get('mode') === 'single')
+                                ->required(fn (Forms\Get $get): bool => $get('mode') === 'single'),
+
+                            Forms\Components\Select::make('employee_ids')
+                                ->label('الموظفون')
+                                ->helperText('سيُقسم عدد الحسابات المحددة عليهم بالتساوي (الباقي يتوزع من الأول للأخير).')
+                                ->options(fn (): array => self::employeeOptions())
+                                ->multiple()
+                                ->searchable()
+                                ->preload()
+                                ->minItems(2)
+                                ->visible(fn (Forms\Get $get): bool => $get('mode') === 'split')
+                                ->required(fn (Forms\Get $get): bool => $get('mode') === 'split'),
+                        ])
+                        ->action(function (Collection $records, array $data): void {
+                            // Filter to rows the caller may act on AND
+                            // that aren't already in flight. "in flight"
+                            // = credentials revealed. Anything else
+                            // (available, or assigned-but-not-yet-opened)
+                            // is fair game to move.
+                            $movable = $records->filter(function (Account $a): bool {
+                                if (! self::canManage($a)) {
+                                    return false;
+                                }
+                                $assignment = $a->assignment;
+                                if ($assignment === null) {
+                                    return true;
+                                }
+                                return $assignment->credentials_revealed_at === null;
+                            })->values();
+
+                            $skipped = $records->count() - $movable->count();
+
+                            if ($movable->isEmpty()) {
+                                Notification::make()->warning()->title('لا يوجد حسابات قابلة لإعادة التخصيص في التحديد')->send();
+                                return;
+                            }
+
+                            $summary = [];
+
+                            if (($data['mode'] ?? 'single') === 'single') {
+                                $employeeId = (int) $data['employee_id'];
+                                self::assignAccounts($movable, $employeeId);
+                                $summary[] = (User::find($employeeId)?->name ?? '#'.$employeeId).': '.$movable->count();
+                            } else {
+                                $employeeIds = array_values(array_map('intval', $data['employee_ids'] ?? []));
+                                $n = count($employeeIds);
+                                $total = $movable->count();
+                                $share = intdiv($total, $n);
+                                $remainder = $total % $n;
+
+                                $offset = 0;
+                                foreach ($employeeIds as $i => $employeeId) {
+                                    $take = $share + ($i < $remainder ? 1 : 0);
+                                    if ($take <= 0) {
+                                        continue;
+                                    }
+                                    $chunk = $movable->slice($offset, $take);
+                                    $offset += $take;
+                                    self::assignAccounts($chunk, $employeeId);
+                                    $summary[] = (User::find($employeeId)?->name ?? '#'.$employeeId).': '.$chunk->count();
+                                }
+                            }
+
+                            Notification::make()
+                                ->success()
+                                ->title('اكتملت إعادة التخصيص')
+                                ->body(implode(' — ', $summary).($skipped > 0 ? " (تُجُوهل {$skipped} خارج نطاقك أو قيد التنفيذ)" : ''))
+                                ->send();
+                        })
+                        ->deselectRecordsAfterCompletion(),
+
                     // Only the manager (of supervisors) handles the client
                     // correction loop — they pull the failed batch and send
                     // it to the owner as Excel outside the system.
