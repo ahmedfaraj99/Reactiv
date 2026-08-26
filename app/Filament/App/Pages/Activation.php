@@ -454,35 +454,36 @@ class Activation extends Page
 
     public function completeAction(): Action
     {
+        // Proof is optional for every account now — the audit trail
+        // (reveal_logs, TOTP counts, timing) plus the reviewer's own
+        // judgement is what catches fraud. Forcing a photo on every
+        // activation slowed the floor down without a matching gain,
+        // per the office managers' feedback.
         return Action::make('complete')
-            ->label('إرسال إثبات الإنجاز')
+            ->label('إنهاء التفعيل')
             ->icon('heroicon-o-check-circle')
             ->color('success')
             ->requiresConfirmation()
-            ->modalHeading('إرسال إثبات الإنجاز')
-            ->modalDescription('لازم ترفع صورة إثبات قبل إغلاق الحساب — المشرف سيراجعها ويعتمدها.')
+            ->modalHeading('إنهاء التفعيل')
+            ->modalDescription('رفع صورة الإثبات اختياري — تقدر ترفعها لو حابب، أو تخلص من غير.')
             ->disabled(fn (): bool => $this->isLocked())
             ->form([
                 FileUpload::make('proof_path')
-                    ->label(fn (): string => $this->assignment->account->requiresMatches()
-                        ? 'صورة إثبات التفعيل + المباريات'
-                        : 'صورة إثبات التفعيل')
+                    ->label('صورة إثبات التفعيل (اختياري)')
                     ->helperText(function (): string {
                         $account = $this->assignment->account;
                         if ($account->requiresMatches()) {
-                            return "التقط الصورة بكاميرا موبايلك لشاشة التلفزيون بعد إنهاء الـ {$account->matches_required} مباريات، وتُظهر أرباح المباريات (Match Rewards / MVP). لا تستخدم screenshot من المتصفح.";
+                            return "اختياري — لو رفعتها، التقط بكاميرا الموبايل لشاشة التلفزيون بعد إنهاء الـ {$account->matches_required} مباريات وتُظهر أرباح المباريات (Match Rewards / MVP). صورة المتصفح لا تُحسب إثباتاً.";
                         }
-                        return 'التقط الصورة بكاميرا موبايلك لشاشة التلفزيون تُظهر تسجيل الدخول ناجحاً على الحساب. لا تستخدم screenshot من المتصفح.';
+                        return 'اختياري — لو رفعتها ارفع صورة من كاميرا الموبايل لشاشة التلفزيون. صورة المتصفح لا تُحسب إثباتاً.';
                     })
                     ->image()
-                    ->required()
                     ->disk('local')
                     ->directory('proofs')
                     ->maxSize(4096),
             ])
             ->action(function (array $data, ProofImageProcessor $processor): void {
-                $relativePath = (string) $data['proof_path'];
-                $absolute = Storage::disk('local')->path($relativePath);
+                $relativePath = ! empty($data['proof_path']) ? (string) $data['proof_path'] : null;
 
                 // Hash the pristine bytes, then burn the watermark into
                 // the stored file. Failure to process (unreadable file,
@@ -490,22 +491,27 @@ class Activation extends Page
                 // employee — they've done the work, we still record the
                 // proof and let the supervisor decide. proof_hash stays
                 // null in that case, so duplicate detection just doesn't
-                // fire, rather than blocking a real submission.
+                // fire, rather than blocking a real submission. Skipped
+                // entirely when the employee submitted without a proof
+                // (allowed for plain-activation accounts).
                 $hash = null;
-                try {
-                    $hash = $processor->process(
-                        $absolute,
-                        auth()->user(),
-                        $this->assignment,
-                    );
-                } catch (\Throwable $e) {
-                    report($e);
+                if ($relativePath !== null) {
+                    $absolute = Storage::disk('local')->path($relativePath);
+                    try {
+                        $hash = $processor->process(
+                            $absolute,
+                            auth()->user(),
+                            $this->assignment,
+                        );
+                    } catch (\Throwable $e) {
+                        report($e);
+                    }
                 }
 
-                DB::transaction(function () use ($data, $hash): void {
+                DB::transaction(function () use ($relativePath, $hash): void {
                     $this->assignment->update([
                         'status'       => AccountAssignment::STATUS_AWAITING_REVIEW,
-                        'proof_path'   => (string) $data['proof_path'],
+                        'proof_path'   => $relativePath,
                         'proof_hash'   => $hash,
                         'submitted_at' => now(),
                     ]);
@@ -518,7 +524,12 @@ class Activation extends Page
 
                 $this->flagIfSuspiciouslyFast();
 
-                Notification::make()->success()->title('أُرسل الإثبات — بانتظار موافقة المشرف')->send();
+                Notification::make()
+                    ->success()
+                    ->title($relativePath !== null
+                        ? 'أُرسل الإثبات — بانتظار موافقة المشرف'
+                        : 'أُرسل التفعيل — بانتظار موافقة المشرف')
+                    ->send();
                 $this->redirect(MyAccounts::getUrl());
             });
     }
@@ -618,6 +629,19 @@ class Activation extends Page
                     ->map(fn (string $key) => self::WRONG_DATA_OPTIONS[$key] ?? $key)
                     ->implode('، ');
 
+                // Snapshot the pre-fail state so MyAccounts can offer a
+                // 5-second undo. "Wrong data" is the one action here where
+                // a mistaken click is common (checkbox slip) AND fully
+                // reversible — nothing has been sent to the customer yet,
+                // no proof has changed hands, the account is still in
+                // this employee's queue.
+                $previous = [
+                    'assignment_id'   => $this->assignment->id,
+                    'previous_status' => $this->assignment->status,
+                    'previous_notes'  => $this->assignment->notes,
+                    'expires_at'      => now()->addSeconds(5)->timestamp,
+                ];
+
                 DB::transaction(function () use ($labels): void {
                     $this->assignment->update([
                         'status'       => AccountAssignment::STATUS_FAILED,
@@ -626,6 +650,8 @@ class Activation extends Page
                     ]);
                     $this->logAction('fail', $this->assignment->account);
                 });
+
+                session()->put('undo_fail', $previous);
 
                 Notification::make()->warning()->title('سُجِّل الفشل — '.$labels)->send();
                 $this->redirect(MyAccounts::getUrl());

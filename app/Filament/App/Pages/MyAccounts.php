@@ -52,6 +52,117 @@ class MyAccounts extends Page implements HasTable
     }
 
     /**
+     * Total assignments currently sitting in this employee's queue —
+     * the JS layer diffs this against a sessionStorage snapshot each
+     * time the polling refresh re-renders the page, and fires a beep
+     * plus vibration on any increase. Kept intentionally cheap: one
+     * indexed count query per poll.
+     */
+    public function getPendingCount(): int
+    {
+        return AccountAssignment::query()
+            ->where('employee_id', auth()->id())
+            ->where('tenant_id', filament()->getTenant()?->id)
+            ->whereIn('status', [
+                AccountAssignment::STATUS_PENDING,
+                AccountAssignment::STATUS_IN_PROGRESS,
+                AccountAssignment::STATUS_AWAITING_REVIEW,
+            ])
+            ->count();
+    }
+
+    /**
+     * Undo-fail snapshot for the banner: pulled from the session key
+     * Activation::wrongDataAction dropped there, verified to still be
+     * within the 5-second grace window AND to still belong to a row
+     * this employee owns. Anything sketchy → null (banner hidden). The
+     * session entry is left in place; the banner's own countdown hides
+     * it visually and the next fail overwrites it.
+     *
+     * @return array{assignment_id:int, previous_status:string, previous_notes:?string, expires_at:int}|null
+     */
+    public function getUndoFailContext(): ?array
+    {
+        $entry = session('undo_fail');
+        if (! is_array($entry) || ! isset($entry['assignment_id'], $entry['expires_at'])) {
+            return null;
+        }
+        if ($entry['expires_at'] < now()->timestamp) {
+            return null;
+        }
+        $assignment = AccountAssignment::query()
+            ->where('id', $entry['assignment_id'])
+            ->where('employee_id', auth()->id())
+            ->where('status', AccountAssignment::STATUS_FAILED)
+            ->first();
+        return $assignment !== null ? $entry : null;
+    }
+
+    /**
+     * Reverse the most recent "wrong data" click within its 5-second
+     * grace window. Rejects any request outside the window or aimed at
+     * an assignment the caller doesn't own — the session snapshot is
+     * necessary but not sufficient (belt + braces against a stale tab
+     * firing this after we've already assigned the account to someone
+     * else). Success flips the row back to its pre-fail status and
+     * clears the fail note; the reveal_logs entry from the original
+     * fail stays for the audit trail, joined by an 'unfail' record so
+     * the timeline shows what happened.
+     */
+    public function undoFail(): void
+    {
+        $entry = session('undo_fail');
+        if (! is_array($entry) || ! isset($entry['assignment_id'], $entry['expires_at'])) {
+            return;
+        }
+        if ($entry['expires_at'] < now()->timestamp) {
+            session()->forget('undo_fail');
+            \Filament\Notifications\Notification::make()
+                ->warning()->title('انتهت مهلة التراجع')->send();
+            return;
+        }
+
+        $assignment = AccountAssignment::query()
+            ->where('id', $entry['assignment_id'])
+            ->where('employee_id', auth()->id())
+            ->where('status', AccountAssignment::STATUS_FAILED)
+            ->first();
+
+        if ($assignment === null) {
+            session()->forget('undo_fail');
+            return;
+        }
+
+        DB::transaction(function () use ($assignment, $entry): void {
+            $assignment->update([
+                'status'       => $entry['previous_status'] ?? AccountAssignment::STATUS_IN_PROGRESS,
+                'notes'        => $entry['previous_notes'] ?? null,
+                'completed_at' => null,
+            ]);
+            \App\Models\RevealLog::create([
+                'tenant_id'          => $assignment->tenant_id,
+                'user_id'            => (int) auth()->id(),
+                'account_id'         => $assignment->account_id,
+                'action'             => 'unfail',
+                'ip'                 => request()->ip(),
+                'user_agent'         => substr((string) request()->userAgent(), 0, 500),
+                'device_fingerprint' => request()->cookie('fc_fp'),
+                'created_at'         => now(),
+            ]);
+        });
+
+        session()->forget('undo_fail');
+
+        \Filament\Notifications\Notification::make()
+            ->success()->title('تم التراجع — الحساب عاد لحالته')->send();
+
+        $this->redirect(\App\Filament\App\Pages\Activation::getUrl([
+            'tenant'     => filament()->getTenant()->slug,
+            'assignment' => $assignment->id,
+        ]));
+    }
+
+    /**
      * "Today" snapshot for the employee looking at this page — count of
      * completed activations, their own average work time, the team's
      * average for the same day, a comparison percentage, and today's
