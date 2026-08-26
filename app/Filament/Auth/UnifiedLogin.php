@@ -22,10 +22,18 @@ class UnifiedLogin extends Login
         try {
             $this->rateLimit(3, 120);
         } catch (TooManyRequestsException $exception) {
-            $this->getRateLimitedNotification($exception)?->send();
             $this->reportLoginAttack();
 
-            return null;
+            // Filament's default rate-limit notification is a toast that's
+            // easy to miss and worded in English. Attach a specific,
+            // Arabic error to the email field so the user sees *why* the
+            // form failed — not the generic "invalid credentials" that
+            // makes them assume the password is wrong and try again.
+            throw ValidationException::withMessages([
+                'data.email' => 'محاولات دخول كثيرة. انتظر '
+                    .$exception->secondsUntilAvailable
+                    .' ثانية قبل المحاولة مرة أخرى.',
+            ]);
         }
 
         $data = $this->form->getState();
