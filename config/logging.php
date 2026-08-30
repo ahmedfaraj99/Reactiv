@@ -1,5 +1,6 @@
 <?php
 
+use Monolog\Formatter\JsonFormatter;
 use Monolog\Handler\NullHandler;
 use Monolog\Handler\StreamHandler;
 use Monolog\Handler\SyslogUdpHandler;
@@ -133,6 +134,22 @@ return [
 
         'emergency' => [
             'path' => storage_path('logs/laravel.log'),
+        ],
+
+        /*
+         * Dedicated audit trail for security-relevant events (login attacks,
+         * new devices, suspicious speed, duplicate proof, emergency freeze).
+         * JSON one-line-per-event so it's greppable and ships cleanly into a
+         * SIEM. Kept separate from the app log so operational chatter doesn't
+         * drown the signal, and retained longer.
+         */
+        'security' => [
+            'driver'    => 'daily',
+            'path'      => storage_path('logs/security.log'),
+            'level'     => env('SECURITY_LOG_LEVEL', 'info'),
+            'days'      => (int) env('SECURITY_LOG_DAYS', 90),
+            'formatter' => JsonFormatter::class,
+            'replace_placeholders' => true,
         ],
 
     ],
