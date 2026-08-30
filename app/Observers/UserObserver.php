@@ -7,6 +7,7 @@ namespace App\Observers;
 use App\Models\AccountAssignment;
 use App\Models\Alert;
 use App\Models\User;
+use App\Enums\AlertType;
 
 /**
  * An employee being deleted or deactivated shouldn't leave their
@@ -71,7 +72,7 @@ class UserObserver
             Alert::create([
                 'tenant_id' => $user->tenant_id,
                 'user_id'   => $user->id,
-                'type'      => Alert::TYPE_ASSIGNMENTS_RELEASED,
+                'type'      => AlertType::AssignmentsReleased,
                 'severity'  => 'high',
                 'message'   => "أُعيد {$count} حساباً إلى المخزون بعد تعطيل الموظف {$employeeName} — تحتاج إعادة توزيع",
                 'payload'   => [

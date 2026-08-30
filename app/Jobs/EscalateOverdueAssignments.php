@@ -11,6 +11,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use App\Enums\AlertType;
 
 /**
  * Scheduled sweep (see routes/console.php) that catches assignments
@@ -47,7 +48,7 @@ class EscalateOverdueAssignments implements ShouldQueue
                 // Debounce: one overdue alert per account is enough — it
                 // stays visible on the Alerts page until someone resolves
                 // it, rather than re-firing every time the sweep runs.
-                $q->where('type', Alert::TYPE_ASSIGNMENT_OVERDUE)
+                $q->where('type', AlertType::AssignmentOverdue)
                     ->where('resolved', false);
             })
             ->with('account')
@@ -59,7 +60,7 @@ class EscalateOverdueAssignments implements ShouldQueue
                         'tenant_id'  => $assignment->tenant_id,
                         'user_id'    => $assignment->employee_id,
                         'account_id' => $assignment->account_id,
-                        'type'       => Alert::TYPE_ASSIGNMENT_OVERDUE,
+                        'type'       => AlertType::AssignmentOverdue,
                         'severity'   => 'high',
                         'message'    => "تخصيص متأخر منذ {$hours} ساعة بلا استكمال",
                         'payload'    => [

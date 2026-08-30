@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Enums\AlertSeverity;
 use App\Enums\UserRole;
 use App\Models\Alert;
 use App\Models\RevealLog;
 use Tests\TestCase;
+use App\Enums\AlertType;
 
 /**
  * The three detection rules AlertEngine runs on every RevealLog write.
@@ -41,7 +43,7 @@ class AlertEngineTest extends TestCase
 
         $this->makeLog($tenant->id, $employee->id, $account->id, 'reveal_credentials', now());
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_REPEAT_REVEAL)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::RepeatReveal)->count());
     }
 
     public function test_a_second_reveal_of_the_same_account_today_raises_repeat_reveal(): void
@@ -54,9 +56,9 @@ class AlertEngineTest extends TestCase
         $this->makeLog($tenant->id, $employee->id, $account->id, 'reveal_credentials', now()->subHour());
         $this->makeLog($tenant->id, $employee->id, $account->id, 'reveal_credentials', now());
 
-        $alert = Alert::where('type', Alert::TYPE_REPEAT_REVEAL)->first();
+        $alert = Alert::where('type', AlertType::RepeatReveal)->first();
         $this->assertNotNull($alert);
-        $this->assertSame('high', $alert->severity);
+        $this->assertSame(AlertSeverity::High, $alert->severity);
         $this->assertSame($employee->id, $alert->user_id);
     }
 
@@ -71,7 +73,7 @@ class AlertEngineTest extends TestCase
         $this->makeLog($tenant->id, $employee->id, $accountA->id, 'reveal_credentials', now()->subHour());
         $this->makeLog($tenant->id, $employee->id, $accountB->id, 'reveal_credentials', now());
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_REPEAT_REVEAL)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::RepeatReveal)->count());
     }
 
     public function test_a_reveal_yesterday_does_not_count_toward_todays_repeat(): void
@@ -84,7 +86,7 @@ class AlertEngineTest extends TestCase
         $this->makeLog($tenant->id, $employee->id, $account->id, 'reveal_credentials', now()->subDay());
         $this->makeLog($tenant->id, $employee->id, $account->id, 'reveal_credentials', now());
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_REPEAT_REVEAL)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::RepeatReveal)->count());
     }
 
     // ── offHoursRule ─────────────────────────────────────────────────
@@ -98,7 +100,7 @@ class AlertEngineTest extends TestCase
 
         $this->makeLog($tenant->id, $employee->id, $account->id, 'reveal_credentials', now()->setTime(14, 0));
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_OFF_HOURS)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::OffHours)->count());
     }
 
     public function test_activity_at_2am_raises_off_hours_alert(): void
@@ -110,9 +112,9 @@ class AlertEngineTest extends TestCase
 
         $this->makeLog($tenant->id, $employee->id, $account->id, 'generate_totp_psn', now()->setTime(2, 0));
 
-        $alert = Alert::where('type', Alert::TYPE_OFF_HOURS)->first();
+        $alert = Alert::where('type', AlertType::OffHours)->first();
         $this->assertNotNull($alert);
-        $this->assertSame('medium', $alert->severity);
+        $this->assertSame(AlertSeverity::Medium, $alert->severity);
     }
 
     public function test_activity_exactly_at_work_start_boundary_is_in_hours(): void
@@ -125,7 +127,7 @@ class AlertEngineTest extends TestCase
         // WORK_START = 8 — the boundary hour itself must count as inside.
         $this->makeLog($tenant->id, $employee->id, $account->id, 'reveal_credentials', now()->setTime(8, 0));
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_OFF_HOURS)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::OffHours)->count());
     }
 
     public function test_activity_exactly_at_work_end_boundary_is_out_of_hours(): void
@@ -139,7 +141,7 @@ class AlertEngineTest extends TestCase
         // (the check is `< WORK_END`, so 22:00 sharp is already outside).
         $this->makeLog($tenant->id, $employee->id, $account->id, 'reveal_credentials', now()->setTime(22, 0));
 
-        $this->assertSame(1, Alert::where('type', Alert::TYPE_OFF_HOURS)->count());
+        $this->assertSame(1, Alert::where('type', AlertType::OffHours)->count());
     }
 
     public function test_off_hours_rule_ignores_non_sensitive_actions(): void
@@ -151,7 +153,7 @@ class AlertEngineTest extends TestCase
 
         $this->makeLog($tenant->id, $employee->id, $account->id, 'submit_proof', now()->setTime(2, 0));
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_OFF_HOURS)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::OffHours)->count());
     }
 
     // ── highVolumeRule ───────────────────────────────────────────────
@@ -168,7 +170,7 @@ class AlertEngineTest extends TestCase
             $this->makeLog($tenant->id, $employee->id, $account->id, 'reveal_credentials', $now->copy()->subMinutes($i));
         }
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_HIGH_VOLUME)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::HighVolume)->count());
     }
 
     public function test_40th_action_in_an_hour_triggers_high_volume(): void
@@ -183,10 +185,10 @@ class AlertEngineTest extends TestCase
             $this->makeLog($tenant->id, $employee->id, $account->id, 'reveal_credentials', $now->copy()->subMinutes(40 - $i));
         }
 
-        $alert = Alert::where('type', Alert::TYPE_HIGH_VOLUME)->first();
+        $alert = Alert::where('type', AlertType::HighVolume)->first();
         $this->assertNotNull($alert);
-        $this->assertSame('critical', $alert->severity);
-        $this->assertSame(1, Alert::where('type', Alert::TYPE_HIGH_VOLUME)->count());
+        $this->assertSame(AlertSeverity::Critical, $alert->severity);
+        $this->assertSame(1, Alert::where('type', AlertType::HighVolume)->count());
     }
 
     public function test_high_volume_alert_is_debounced_within_the_same_hour(): void
@@ -203,7 +205,7 @@ class AlertEngineTest extends TestCase
 
         // 41 actions crossed the threshold twice (at #40 and #41), but the
         // second must be suppressed — an alert already fired in the window.
-        $this->assertSame(1, Alert::where('type', Alert::TYPE_HIGH_VOLUME)->count());
+        $this->assertSame(1, Alert::where('type', AlertType::HighVolume)->count());
     }
 
     public function test_actions_older_than_an_hour_drop_out_of_the_high_volume_window(): void
@@ -220,6 +222,6 @@ class AlertEngineTest extends TestCase
         }
         $this->makeLog($tenant->id, $employee->id, $account->id, 'reveal_credentials', $now);
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_HIGH_VOLUME)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::HighVolume)->count());
     }
 }

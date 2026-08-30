@@ -9,6 +9,7 @@ use App\Jobs\EscalateOverdueAssignments;
 use App\Models\Alert;
 use App\Models\AccountAssignment;
 use Tests\TestCase;
+use App\Enums\AlertType;
 
 class EscalateOverdueAssignmentsTest extends TestCase
 {
@@ -25,7 +26,7 @@ class EscalateOverdueAssignmentsTest extends TestCase
 
         (new EscalateOverdueAssignments)->handle();
 
-        $alert = Alert::where('type', Alert::TYPE_ASSIGNMENT_OVERDUE)->first();
+        $alert = Alert::where('type', AlertType::AssignmentOverdue)->first();
         $this->assertNotNull($alert);
         $this->assertSame($employee->id, $alert->user_id);
         $this->assertSame($account->id, $alert->account_id);
@@ -45,7 +46,7 @@ class EscalateOverdueAssignmentsTest extends TestCase
 
         (new EscalateOverdueAssignments)->handle();
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_ASSIGNMENT_OVERDUE)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::AssignmentOverdue)->count());
     }
 
     public function test_completed_assignments_are_never_escalated(): void
@@ -62,7 +63,7 @@ class EscalateOverdueAssignmentsTest extends TestCase
 
         (new EscalateOverdueAssignments)->handle();
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_ASSIGNMENT_OVERDUE)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::AssignmentOverdue)->count());
     }
 
     public function test_a_second_sweep_does_not_duplicate_an_unresolved_alert(): void
@@ -79,7 +80,7 @@ class EscalateOverdueAssignmentsTest extends TestCase
         (new EscalateOverdueAssignments)->handle();
         (new EscalateOverdueAssignments)->handle();
 
-        $this->assertSame(1, Alert::where('type', Alert::TYPE_ASSIGNMENT_OVERDUE)->count());
+        $this->assertSame(1, Alert::where('type', AlertType::AssignmentOverdue)->count());
     }
 
     public function test_a_resolved_alert_allows_re_escalation_on_the_next_sweep(): void
@@ -94,9 +95,9 @@ class EscalateOverdueAssignmentsTest extends TestCase
         ]);
 
         (new EscalateOverdueAssignments)->handle();
-        Alert::where('type', Alert::TYPE_ASSIGNMENT_OVERDUE)->update(['resolved' => true]);
+        Alert::where('type', AlertType::AssignmentOverdue)->update(['resolved' => true]);
         (new EscalateOverdueAssignments)->handle();
 
-        $this->assertSame(2, Alert::where('type', Alert::TYPE_ASSIGNMENT_OVERDUE)->count());
+        $this->assertSame(2, Alert::where('type', AlertType::AssignmentOverdue)->count());
     }
 }

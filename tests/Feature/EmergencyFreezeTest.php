@@ -11,6 +11,7 @@ use App\Models\AccountAssignment;
 use App\Models\Alert;
 use Livewire\Livewire;
 use Tests\TestCase;
+use App\Enums\AlertType;
 
 /**
  * Owner-only kill switch. When the tenant is frozen:
@@ -38,7 +39,7 @@ class EmergencyFreezeTest extends TestCase
         $this->assertNotNull($fresh->frozen_at);
         $this->assertSame('اشتباه بتسريب من موظف', $fresh->frozen_reason);
         $this->assertSame($owner->id, $fresh->frozen_by);
-        $this->assertSame(1, Alert::where('type', Alert::TYPE_EMERGENCY_FREEZE)
+        $this->assertSame(1, Alert::where('type', AlertType::EmergencyFreeze)
             ->where('payload->action', 'frozen')->count());
     }
 
@@ -76,7 +77,7 @@ class EmergencyFreezeTest extends TestCase
         $fresh = $tenant->fresh();
         $this->assertNull($fresh->frozen_at);
         $this->assertNull($fresh->frozen_reason);
-        $this->assertSame(1, Alert::where('type', Alert::TYPE_EMERGENCY_FREEZE)
+        $this->assertSame(1, Alert::where('type', AlertType::EmergencyFreeze)
             ->where('payload->action', 'unfrozen')->count());
     }
 

@@ -15,6 +15,7 @@ use Filament\Widgets\Widget;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
+use App\Enums\AlertType;
 
 /**
  * Owner-only kill switch. One glaring button that stops every
@@ -93,7 +94,7 @@ class EmergencyFreezeWidget extends Widget implements HasActions, HasForms
                 Alert::create([
                     'tenant_id' => $tenant->id,
                     'user_id'   => $u->id,
-                    'type'      => Alert::TYPE_EMERGENCY_FREEZE,
+                    'type'      => AlertType::EmergencyFreeze,
                     'severity'  => 'critical',
                     'message'   => "فُعِّل تجميد الطوارئ — السبب: {$data['reason']}",
                     'payload'   => ['action' => 'frozen', 'reason' => $data['reason']],
@@ -134,7 +135,7 @@ class EmergencyFreezeWidget extends Widget implements HasActions, HasForms
                 Alert::create([
                     'tenant_id' => $tenant->id,
                     'user_id'   => $u->id,
-                    'type'      => Alert::TYPE_EMERGENCY_FREEZE,
+                    'type'      => AlertType::EmergencyFreeze,
                     'severity'  => 'high',
                     'message'   => 'تم فكّ تجميد الطوارئ — النظام يعمل بشكل طبيعي',
                     'payload'   => ['action' => 'unfrozen'],

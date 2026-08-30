@@ -8,18 +8,63 @@ use App\Enums\UserRole;
 use App\Models\Account;
 use App\Models\AccountAssignment;
 use App\Models\Alert;
+use App\Notifications\CriticalAlertNotification;
 use Tests\TestCase;
+use App\Enums\AlertType;
 
 /**
  * AlertObserver fires CriticalAlertNotification for urgent alerts. This
- * covers the two delivery paths that matter: the tenant owner always
- * gets a database (in-app bell) notification alongside mail, and an
- * assignment_overdue alert additionally reaches the assignment's own
- * supervisor — not just the owner — since the supervisor is who can
- * actually chase the employee.
+ * covers the delivery paths that matter: the tenant owner always gets a
+ * database (in-app bell) notification, mail is gated to a short allowlist
+ * of genuinely security-critical types (see CriticalAlertNotification::
+ * MAIL_TYPES), and an assignment_overdue alert additionally reaches the
+ * assignment's own supervisor — not just the owner — since the supervisor
+ * is who can actually chase the employee.
  */
 class CriticalAlertNotificationTest extends TestCase
 {
+    public function test_operational_noise_alerts_stay_in_the_bell_and_do_not_send_mail(): void
+    {
+        $noisyTypes = [
+            [AlertType::TotpLimit,          'medium'],
+            [AlertType::AssignmentOverdue,  'high'],
+            [AlertType::AssignmentsReleased,'high'],
+            [AlertType::HighVolume,         'critical'],
+            [AlertType::RepeatReveal,       'high'],
+        ];
+
+        foreach ($noisyTypes as [$type, $severity]) {
+            $alert = new Alert(['type' => $type, 'severity' => $severity]);
+
+            $this->assertSame(
+                ['database'],
+                (new CriticalAlertNotification($alert))->via(new \stdClass),
+                "expected {$type->value} to stay in the bell only"
+            );
+        }
+    }
+
+    public function test_security_critical_alerts_reach_mail(): void
+    {
+        $mailTypes = [
+            [AlertType::LoginAttack,     'critical'],
+            [AlertType::EmergencyFreeze, 'critical'],
+            [AlertType::SuspiciousSpeed, 'critical'],
+            [AlertType::DuplicateProof,  'critical'],
+            [AlertType::NewDevice,       'high'],
+        ];
+
+        foreach ($mailTypes as [$type, $severity]) {
+            $alert = new Alert(['type' => $type, 'severity' => $severity]);
+
+            $this->assertSame(
+                ['mail', 'database'],
+                (new CriticalAlertNotification($alert))->via(new \stdClass),
+                "expected {$type->value} to be mailed"
+            );
+        }
+    }
+
     public function test_a_critical_alert_leaves_a_database_notification_for_the_owner(): void
     {
         $tenant = $this->makeTenant();
@@ -27,7 +72,7 @@ class CriticalAlertNotificationTest extends TestCase
 
         Alert::create([
             'tenant_id' => $tenant->id,
-            'type'      => Alert::TYPE_LOGIN_ATTACK,
+            'type'      => AlertType::LoginAttack,
             'severity'  => 'critical',
             'message'   => 'محاولات دخول مشبوهة',
         ]);
@@ -44,7 +89,7 @@ class CriticalAlertNotificationTest extends TestCase
 
         Alert::create([
             'tenant_id' => $tenant->id,
-            'type'      => Alert::TYPE_OFF_HOURS,
+            'type'      => AlertType::OffHours,
             'severity'  => 'medium',
             'message'   => 'نشاط خارج ساعات العمل',
         ]);
@@ -73,7 +118,7 @@ class CriticalAlertNotificationTest extends TestCase
             'tenant_id'  => $tenant->id,
             'user_id'    => $employee->id,
             'account_id' => $account->id,
-            'type'       => Alert::TYPE_ASSIGNMENT_OVERDUE,
+            'type'       => AlertType::AssignmentOverdue,
             'severity'   => 'high',
             'message'    => 'تخصيص متأخر',
             'payload'    => ['assignment_id' => $assignment->id],

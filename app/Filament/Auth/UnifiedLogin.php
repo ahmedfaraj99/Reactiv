@@ -14,6 +14,7 @@ use Filament\Models\Contracts\FilamentUser;
 use Filament\Pages\Auth\Login;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use App\Enums\AlertType;
 
 class UnifiedLogin extends Login
 {
@@ -154,7 +155,7 @@ class UnifiedLogin extends Login
         Alert::create([
             'tenant_id' => $target->tenant_id,
             'user_id'   => $target->id,
-            'type'      => Alert::TYPE_LOGIN_ATTACK,
+            'type'      => AlertType::LoginAttack,
             'severity'  => 'critical',
             'message'   => "محاولات دخول فاشلة متكررة على حساب {$target->name} من عنوان {$ip}",
             'payload'   => ['ip' => $ip, 'email' => $email],

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\App\Resources;
 
+use App\Enums\AlertSeverity;
 use App\Enums\UserRole;
 use App\Filament\App\Resources\AlertResource\Pages;
 use App\Models\Alert;
@@ -15,6 +16,7 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use App\Enums\AlertType;
 
 class AlertResource extends Resource
 {
@@ -104,37 +106,12 @@ class AlertResource extends Resource
                 Tables\Columns\TextColumn::make('severity')
                     ->label('الخطورة')
                     ->badge()
-                    ->color(fn (string $state): string => match ($state) {
-                        'critical' => 'danger',
-                        'high'     => 'danger',
-                        'medium'   => 'warning',
-                        'low'      => 'gray',
-                        default    => 'gray',
-                    })
-                    ->formatStateUsing(fn (string $state): string => match ($state) {
-                        'critical' => 'حرج',
-                        'high'     => 'مرتفع',
-                        'medium'   => 'متوسط',
-                        'low'      => 'منخفض',
-                        default    => $state,
-                    }),
+                    ->color(fn (AlertSeverity $state): string => $state->filamentColor())
+                    ->formatStateUsing(fn (AlertSeverity $state): string => $state->label()),
 
                 Tables\Columns\TextColumn::make('type')
                     ->label('النوع')
-                    ->formatStateUsing(fn (string $state): string => match ($state) {
-                        Alert::TYPE_REPEAT_REVEAL => 'كشف متكرر',
-                        Alert::TYPE_NEW_DEVICE    => 'جهاز جديد',
-                        Alert::TYPE_OFF_HOURS     => 'خارج ساعات العمل',
-                        Alert::TYPE_HIGH_VOLUME   => 'حجم غير طبيعي',
-                        Alert::TYPE_TOTP_LIMIT    => 'طلب كود إضافي',
-                        Alert::TYPE_LOGIN_ATTACK  => 'محاولات دخول مشبوهة',
-                        Alert::TYPE_ASSIGNMENT_OVERDUE => 'تخصيص متأخر',
-                        Alert::TYPE_ASSIGNMENTS_RELEASED => 'حسابات محررة تحتاج إعادة توزيع',
-                        Alert::TYPE_DUPLICATE_PROOF => 'صورة إثبات مكررة',
-                        Alert::TYPE_SUSPICIOUS_SPEED => 'تفعيل بسرعة غير طبيعية',
-                        Alert::TYPE_EMERGENCY_FREEZE => 'تجميد/فك تجميد الطوارئ',
-                        default                   => $state,
-                    }),
+                    ->formatStateUsing(fn (AlertType $state): string => $state->label()),
 
                 Tables\Columns\TextColumn::make('user.name')
                     ->label('الموظف')
@@ -163,35 +140,18 @@ class AlertResource extends Resource
 
                 Tables\Filters\SelectFilter::make('severity')
                     ->label('الخطورة')
-                    ->options([
-                        'critical' => 'حرج',
-                        'high'     => 'مرتفع',
-                        'medium'   => 'متوسط',
-                        'low'      => 'منخفض',
-                    ]),
+                    ->options(AlertSeverity::options()),
 
                 Tables\Filters\SelectFilter::make('type')
                     ->label('النوع')
-                    ->options([
-                        Alert::TYPE_REPEAT_REVEAL => 'كشف متكرر',
-                        Alert::TYPE_NEW_DEVICE    => 'جهاز جديد',
-                        Alert::TYPE_OFF_HOURS     => 'خارج ساعات العمل',
-                        Alert::TYPE_HIGH_VOLUME   => 'حجم غير طبيعي',
-                        Alert::TYPE_TOTP_LIMIT    => 'طلب كود إضافي',
-                        Alert::TYPE_LOGIN_ATTACK  => 'محاولات دخول مشبوهة',
-                        Alert::TYPE_ASSIGNMENT_OVERDUE => 'تخصيص متأخر',
-                        Alert::TYPE_ASSIGNMENTS_RELEASED => 'حسابات محررة تحتاج إعادة توزيع',
-                        Alert::TYPE_DUPLICATE_PROOF => 'صورة إثبات مكررة',
-                        Alert::TYPE_SUSPICIOUS_SPEED => 'تفعيل بسرعة غير طبيعية',
-                        Alert::TYPE_EMERGENCY_FREEZE => 'تجميد/فك تجميد الطوارئ',
-                    ]),
+                    ->options(AlertType::options()),
             ])
             ->actions([
                 Tables\Actions\Action::make('approveTotp')
                     ->label('وافق على كود إضافي')
                     ->icon('heroicon-o-key')
                     ->color('primary')
-                    ->visible(fn (Alert $r): bool => ! $r->resolved && $r->type === Alert::TYPE_TOTP_LIMIT)
+                    ->visible(fn (Alert $r): bool => ! $r->resolved && $r->type === AlertType::TotpLimit)
                     ->requiresConfirmation()
                     ->modalDescription('سيُسمح للموظف بتوليد كود واحد إضافي لهذه المنصة في هذا التفعيل.')
                     ->action(function (Alert $record): void {

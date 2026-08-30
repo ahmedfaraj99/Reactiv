@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Observers;
 
+use App\Enums\AlertSeverity;
+use App\Enums\AlertType;
 use App\Enums\UserRole;
 use App\Models\Alert;
 use App\Models\User;
@@ -30,19 +32,19 @@ class AlertObserver
 
         $owner?->notify(new CriticalAlertNotification($alert));
 
-        if ($alert->type === Alert::TYPE_ASSIGNMENT_OVERDUE) {
+        if ($alert->type === AlertType::AssignmentOverdue) {
             $this->notifyAssignmentSupervisor($alert, except: $owner);
         }
 
-        if ($alert->type === Alert::TYPE_ASSIGNMENTS_RELEASED) {
+        if ($alert->type === AlertType::AssignmentsReleased) {
             $this->notifyPoolManager($alert, except: $owner);
         }
     }
 
     private function isUrgent(Alert $alert): bool
     {
-        return in_array($alert->severity, ['critical', 'high'], true)
-            || $alert->type === Alert::TYPE_TOTP_LIMIT;
+        return in_array($alert->severity, [AlertSeverity::Critical, AlertSeverity::High], true)
+            || $alert->type === AlertType::TotpLimit;
     }
 
     /**

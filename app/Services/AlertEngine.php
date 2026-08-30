@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\Alert;
 use App\Models\RevealLog;
+use App\Enums\AlertType;
 
 /**
  * Rule-based alert generator, evaluated once per RevealLog write. Rules
@@ -54,7 +55,7 @@ class AlertEngine
             'tenant_id'  => $log->tenant_id,
             'user_id'    => $log->user_id,
             'account_id' => $log->account_id,
-            'type'       => Alert::TYPE_REPEAT_REVEAL,
+            'type'       => AlertType::RepeatReveal,
             'severity'   => 'high',
             'message'    => "الموظف كشف بيانات نفس الحساب {$count} مرات اليوم",
             'payload'    => ['count' => $count],
@@ -79,7 +80,7 @@ class AlertEngine
             'tenant_id'  => $log->tenant_id,
             'user_id'    => $log->user_id,
             'account_id' => $log->account_id,
-            'type'       => Alert::TYPE_OFF_HOURS,
+            'type'       => AlertType::OffHours,
             'severity'   => 'medium',
             'message'    => "نشاط خارج ساعات العمل الرسمية ({$hour}:00)",
             'payload'    => ['hour' => $hour],
@@ -108,7 +109,7 @@ class AlertEngine
         // Debounce: don't spam alerts if we already fired one in the last hour.
         $recent = Alert::query()
             ->where('user_id', $log->user_id)
-            ->where('type', Alert::TYPE_HIGH_VOLUME)
+            ->where('type', AlertType::HighVolume)
             ->where('created_at', '>=', $log->created_at->copy()->subHour())
             ->exists();
         if ($recent) {
@@ -118,7 +119,7 @@ class AlertEngine
         Alert::create([
             'tenant_id'  => $log->tenant_id,
             'user_id'    => $log->user_id,
-            'type'       => Alert::TYPE_HIGH_VOLUME,
+            'type'       => AlertType::HighVolume,
             'severity'   => 'critical',
             'message'    => "{$count} عملية كشف/توليد خلال الساعة الأخيرة",
             'payload'    => ['count' => $count],

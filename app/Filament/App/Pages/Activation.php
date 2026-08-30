@@ -19,6 +19,7 @@ use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Support\Facades\DB;
+use App\Enums\AlertType;
 
 /**
  * The activation screen — the security-sensitive heart of the app.
@@ -373,7 +374,7 @@ class Activation extends Page
     public function hasPendingTotpApproval(string $platform): bool
     {
         return Alert::query()
-            ->where('type', Alert::TYPE_TOTP_LIMIT)
+            ->where('type', AlertType::TotpLimit)
             ->where('resolved', false)
             ->where('user_id', auth()->id())
             ->whereJsonContains('payload->assignment_id', $this->assignment->id)
@@ -439,7 +440,7 @@ class Activation extends Page
             'tenant_id'  => $account->tenant_id,
             'user_id'    => auth()->id(),
             'account_id' => $account->id,
-            'type'       => Alert::TYPE_TOTP_LIMIT,
+            'type'       => AlertType::TotpLimit,
             'severity'   => 'medium',
             'message'    => 'الموظف وصل لحد توليد كود '.strtoupper($platform).' ويطلب موافقة لمزيد',
             'payload'    => ['assignment_id' => $this->assignment->id, 'platform' => $platform],
@@ -556,7 +557,7 @@ class Activation extends Page
             'tenant_id'  => $assignment->tenant_id,
             'user_id'    => $assignment->employee_id,
             'account_id' => $assignment->account_id,
-            'type'       => Alert::TYPE_SUSPICIOUS_SPEED,
+            'type'       => AlertType::SuspiciousSpeed,
             'severity'   => 'critical',
             'message'    => "تفعيل مكتمل خلال {$seconds} ثانية فقط — أسرع من الحد الأدنى المتوقع لعدد المباريات المطلوبة ({$matches})",
             'payload'    => [
@@ -593,7 +594,7 @@ class Activation extends Page
             'tenant_id'  => $this->assignment->tenant_id,
             'user_id'    => $this->assignment->employee_id,
             'account_id' => $this->assignment->account_id,
-            'type'       => Alert::TYPE_DUPLICATE_PROOF,
+            'type'       => AlertType::DuplicateProof,
             'severity'   => 'critical',
             'message'    => "صورة الإثبات مطابقة تماماً لإثبات سبق رفعه على حساب #{$original->account_id}",
             'payload'    => [

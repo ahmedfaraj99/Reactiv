@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Models\Alert;
 use App\Models\User;
 use Illuminate\Support\Facades\RateLimiter;
+use App\Enums\AlertType;
 
 /**
  * Sliding-window guard for the sensitive credential actions
@@ -15,7 +16,7 @@ use Illuminate\Support\Facades\RateLimiter;
  * employee (or one IP) can trigger these actions across ALL accounts,
  * catching a compromised account being farmed.
  *
- * On breach: block the action AND raise a Alert::TYPE_HIGH_VOLUME
+ * On breach: block the action AND raise a AlertType::HighVolume
  * (deduped to once per hour per user, otherwise a locked-out employee
  * mashing the button would flood the alerts inbox).
  */
@@ -63,7 +64,7 @@ class RevealRateLimiter
     {
         $recent = Alert::query()
             ->where('user_id', $user->id)
-            ->where('type', Alert::TYPE_HIGH_VOLUME)
+            ->where('type', AlertType::HighVolume)
             ->where('created_at', '>=', now()->subHour())
             ->exists();
 
@@ -75,7 +76,7 @@ class RevealRateLimiter
             'tenant_id'  => $user->tenant_id,
             'user_id'    => $user->id,
             'account_id' => $accountId,
-            'type'       => Alert::TYPE_HIGH_VOLUME,
+            'type'       => AlertType::HighVolume,
             'severity'   => 'high',
             'message'    => 'موظف تجاوز حد العمليات الحساسة: '.$reason,
             'payload'    => ['action' => $action, 'reason' => $reason],

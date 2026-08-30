@@ -9,6 +9,7 @@ use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
+use App\Enums\AlertType;
 
 /**
  * On every authenticated request, capture the client-provided fingerprint
@@ -50,7 +51,7 @@ class BindDeviceFingerprint
         // Mismatch → fire alert, but only once per hour to avoid spam
         $recent = Alert::query()
             ->where('user_id', $user->id)
-            ->where('type', Alert::TYPE_NEW_DEVICE)
+            ->where('type', AlertType::NewDevice)
             ->where('created_at', '>=', now()->subHour())
             ->exists();
 
@@ -58,7 +59,7 @@ class BindDeviceFingerprint
             Alert::create([
                 'tenant_id' => $user->tenant_id,
                 'user_id'   => $user->id,
-                'type'      => Alert::TYPE_NEW_DEVICE,
+                'type'      => AlertType::NewDevice,
                 'severity'  => 'high',
                 'message'   => 'تسجيل دخول من جهاز مختلف عن المسجَّل سابقاً',
                 'payload'   => [

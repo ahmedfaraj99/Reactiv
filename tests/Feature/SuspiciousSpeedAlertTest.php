@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Enums\AlertSeverity;
 use App\Enums\UserRole;
 use App\Filament\App\Pages\Activation;
 use App\Models\AccountAssignment;
 use App\Models\Alert;
 use Tests\TestCase;
+use App\Enums\AlertType;
 
 /**
  * When an employee submits proof faster than physically possible for the
@@ -44,9 +46,9 @@ class SuspiciousSpeedAlertTest extends TestCase
 
         $this->activationFor($assignment)->flagIfSuspiciouslyFast();
 
-        $alert = Alert::where('type', Alert::TYPE_SUSPICIOUS_SPEED)->first();
+        $alert = Alert::where('type', AlertType::SuspiciousSpeed)->first();
         $this->assertNotNull($alert);
-        $this->assertSame('critical', $alert->severity);
+        $this->assertSame(AlertSeverity::Critical, $alert->severity);
         $this->assertSame(3, $alert->payload['matches_required']);
         $this->assertLessThan(30, $alert->payload['seconds']);
     }
@@ -67,7 +69,7 @@ class SuspiciousSpeedAlertTest extends TestCase
 
         $this->activationFor($assignment)->flagIfSuspiciouslyFast();
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_SUSPICIOUS_SPEED)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::SuspiciousSpeed)->count());
     }
 
     public function test_activation_only_accounts_use_the_lower_30_second_threshold(): void
@@ -86,7 +88,7 @@ class SuspiciousSpeedAlertTest extends TestCase
 
         $this->activationFor($assignment)->flagIfSuspiciouslyFast();
 
-        $this->assertSame(1, Alert::where('type', Alert::TYPE_SUSPICIOUS_SPEED)->count());
+        $this->assertSame(1, Alert::where('type', AlertType::SuspiciousSpeed)->count());
     }
 
     public function test_missing_timing_data_never_fires_a_false_alert(): void
@@ -105,6 +107,6 @@ class SuspiciousSpeedAlertTest extends TestCase
 
         $this->activationFor($assignment)->flagIfSuspiciouslyFast();
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_SUSPICIOUS_SPEED)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::SuspiciousSpeed)->count());
     }
 }

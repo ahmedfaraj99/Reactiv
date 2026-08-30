@@ -10,6 +10,7 @@ use App\Filament\App\Widgets\EmployeePerformanceLeaderboardWidget;
 use App\Models\AccountAssignment;
 use Livewire\Livewire;
 use Tests\TestCase;
+use App\Enums\AlertType;
 
 /**
  * Full-page render check for the dashboard with real data flowing through
@@ -31,7 +32,7 @@ class DashboardSmokeTest extends TestCase
 
         \App\Models\Alert::create([
             'tenant_id' => $tenant->id,
-            'type'      => \App\Models\Alert::TYPE_LOGIN_ATTACK,
+            'type'      => \App\Enums\AlertType::LoginAttack,
             'severity'  => 'critical',
             'message'   => 'اختبار',
         ]);

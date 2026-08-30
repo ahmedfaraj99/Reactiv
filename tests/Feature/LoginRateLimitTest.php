@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Enums\AlertSeverity;
 use App\Enums\UserRole;
 use App\Filament\Auth\UnifiedLogin;
 use App\Models\Alert;
@@ -11,6 +12,7 @@ use Filament\Facades\Filament;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
 use Tests\TestCase;
+use App\Enums\AlertType;
 
 /**
  * 3 failed attempts within 120 seconds from the same IP trips the
@@ -44,7 +46,7 @@ class LoginRateLimitTest extends TestCase
                 ->call('authenticate');
         }
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_LOGIN_ATTACK)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::LoginAttack)->count());
         $this->assertGuest();
     }
 
@@ -70,9 +72,9 @@ class LoginRateLimitTest extends TestCase
             ->set('data.password', 'CorrectPassword!1')
             ->call('authenticate');
 
-        $alert = Alert::where('type', Alert::TYPE_LOGIN_ATTACK)->first();
+        $alert = Alert::where('type', AlertType::LoginAttack)->first();
         $this->assertNotNull($alert);
-        $this->assertSame('critical', $alert->severity);
+        $this->assertSame(AlertSeverity::Critical, $alert->severity);
         $this->assertSame($tenant->id, $alert->tenant_id);
         $this->assertSame($user->id, $alert->user_id);
         $this->assertGuest();
@@ -88,7 +90,7 @@ class LoginRateLimitTest extends TestCase
                 ->call('authenticate');
         }
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_LOGIN_ATTACK)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::LoginAttack)->count());
         $this->assertGuest();
     }
 }

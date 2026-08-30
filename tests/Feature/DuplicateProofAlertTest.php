@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Enums\AlertSeverity;
 use App\Enums\UserRole;
 use App\Filament\App\Pages\Activation;
 use App\Models\Account;
 use App\Models\AccountAssignment;
 use App\Models\Alert;
 use Tests\TestCase;
+use App\Enums\AlertType;
 
 /**
  * When an employee's proof upload hashes to the same value as an earlier
@@ -55,9 +57,9 @@ class DuplicateProofAlertTest extends TestCase
 
         $this->activationFor($later)->flagIfDuplicate($hash);
 
-        $alert = Alert::where('type', Alert::TYPE_DUPLICATE_PROOF)->first();
+        $alert = Alert::where('type', AlertType::DuplicateProof)->first();
         $this->assertNotNull($alert);
-        $this->assertSame('critical', $alert->severity);
+        $this->assertSame(AlertSeverity::Critical, $alert->severity);
         $this->assertSame($later->account_id, $alert->account_id);
         $this->assertSame($earlier->id, $alert->payload['original_assignment_id']);
         $this->assertSame($earlier->account_id, $alert->payload['original_account_id']);
@@ -75,7 +77,7 @@ class DuplicateProofAlertTest extends TestCase
 
         $this->activationFor($assignment)->flagIfDuplicate(str_repeat('b', 64));
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_DUPLICATE_PROOF)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::DuplicateProof)->count());
     }
 
     public function test_the_check_is_scoped_to_the_same_tenant_only(): void
@@ -107,6 +109,6 @@ class DuplicateProofAlertTest extends TestCase
         // Two different tenants happening to have identical bytes is not a
         // cheating signal — it's just an unrelated coincidence. Alerts
         // must never cross the tenant boundary.
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_DUPLICATE_PROOF)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::DuplicateProof)->count());
     }
 }

@@ -9,23 +9,36 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use App\Enums\AlertType;
 
 /**
  * Real-time delivery for the alerts that actually need eyes on them
- * quickly (suspicious login activity, employee blocked waiting on a
- * code approval, etc.) — without this, an alert is just a row in a
- * table nobody is watching.
+ * quickly — without this, an alert is just a row in a table nobody is
+ * watching.
  *
  * Queued: requires a running `php artisan queue:work` process — without
  * one, this just sits in the jobs table forever and nothing gets sent.
  *
- * Also delivered on the `database` channel so the tenant owner sees it
- * as a bell notification inside the panel immediately on next page load —
- * mail can be delayed or missed, the in-app bell can't.
+ * The in-app bell (`database`) always fires. Mail is reserved for a
+ * short allowlist of genuinely security-critical types — see MAIL_TYPES.
  */
 class CriticalAlertNotification extends Notification implements ShouldQueue
 {
     use Queueable;
+
+    /**
+     * Types that justify paging the owner by email. Anything else stays
+     * in the bell only — otherwise the owner's inbox fills with routine
+     * operational noise (TOTP requests, overdue chases, rate-limit trips,
+     * off-hours notes) and the mail channel loses its signal value.
+     */
+    private const MAIL_TYPES = [
+        AlertType::LoginAttack,
+        AlertType::EmergencyFreeze,
+        AlertType::SuspiciousSpeed,
+        AlertType::DuplicateProof,
+        AlertType::NewDevice,
+    ];
 
     public function __construct(private readonly Alert $alert)
     {
@@ -34,7 +47,9 @@ class CriticalAlertNotification extends Notification implements ShouldQueue
     /** @return array<int,string> */
     public function via(object $notifiable): array
     {
-        return ['mail', 'database'];
+        return in_array($this->alert->type, self::MAIL_TYPES, true)
+            ? ['mail', 'database']
+            : ['database'];
     }
 
     /** @return array<string,mixed> */
@@ -45,25 +60,33 @@ class CriticalAlertNotification extends Notification implements ShouldQueue
             'type'     => $this->alert->type,
             'severity' => $this->alert->severity,
             'message'  => $this->alert->message,
-            'url'      => url('/app/t/'.($notifiable->tenant?->slug ?? '').'/alerts'),
+            'url'      => $this->alertsUrl($notifiable),
         ];
     }
 
     public function toMail(object $notifiable): MailMessage
     {
-        $severityLabel = match ($this->alert->severity) {
-            'critical' => 'حرج',
-            'high'     => 'مرتفع',
-            'medium'   => 'متوسط',
-            default    => 'منخفض',
-        };
+        $typeLabel = $this->alert->type->label();
+        $severityLabel = $this->alert->severity->label();
 
-        return (new MailMessage)
-            ->subject('تنبيه '.$severityLabel.' — FC27AC')
+        $mail = (new MailMessage)
+            ->subject($typeLabel.' — تنبيه '.$severityLabel.' (FC27AC)')
             ->greeting('تنبيه جديد يحتاج مراجعتك')
-            ->line($this->alert->message ?? 'تنبيه بدون تفاصيل إضافية.')
+            ->line('النوع: '.$typeLabel)
             ->line('الخطورة: '.$severityLabel)
-            ->action('عرض التنبيهات', url('/app/t/'.($notifiable->tenant?->slug ?? '').'/alerts'))
-            ->line('لو لم يكن هذا يستحق المتابعة الآن، تقدر تُغلقه من صفحة التنبيهات.');
+            ->line($this->alert->message ?? 'تنبيه بدون تفاصيل إضافية.');
+
+        if ($url = $this->alertsUrl($notifiable)) {
+            $mail->action('عرض التنبيهات', $url);
+        }
+
+        return $mail->line('لو لم يكن هذا يستحق المتابعة الآن، تقدر تُغلقه من صفحة التنبيهات.');
+    }
+
+    private function alertsUrl(object $notifiable): ?string
+    {
+        $slug = $notifiable->tenant?->slug;
+
+        return $slug ? url('/app/t/'.$slug.'/alerts') : null;
     }
 }

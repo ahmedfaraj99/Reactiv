@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Enums\AlertSeverity;
 use App\Enums\UserRole;
 use App\Models\AccountAssignment;
 use App\Models\Alert;
 use Tests\TestCase;
+use App\Enums\AlertType;
 
 /**
  * When an employee gets deactivated (or deleted), UserObserver silently
@@ -34,9 +36,9 @@ class AssignmentsReleasedAlertTest extends TestCase
 
         $employee->update(['active' => false]);
 
-        $alert = Alert::where('type', Alert::TYPE_ASSIGNMENTS_RELEASED)->first();
+        $alert = Alert::where('type', AlertType::AssignmentsReleased)->first();
         $this->assertNotNull($alert);
-        $this->assertSame('high', $alert->severity);
+        $this->assertSame(AlertSeverity::High, $alert->severity);
         $this->assertSame(2, $alert->payload['count']);
         $this->assertSame($manager->id, $alert->payload['manager_id']);
         $this->assertStringContainsString($employee->name, (string) $alert->message);
@@ -50,7 +52,7 @@ class AssignmentsReleasedAlertTest extends TestCase
 
         $employee->update(['active' => false]);
 
-        $this->assertSame(0, Alert::where('type', Alert::TYPE_ASSIGNMENTS_RELEASED)->count());
+        $this->assertSame(0, Alert::where('type', AlertType::AssignmentsReleased)->count());
     }
 
     public function test_alerts_are_split_per_pool_when_accounts_came_from_two_managers(): void
@@ -68,9 +70,9 @@ class AssignmentsReleasedAlertTest extends TestCase
 
         $employee->update(['active' => false]);
 
-        $this->assertSame(2, Alert::where('type', Alert::TYPE_ASSIGNMENTS_RELEASED)->count());
-        $this->assertSame(1, Alert::where('type', Alert::TYPE_ASSIGNMENTS_RELEASED)->where('payload->manager_id', $managerA->id)->count());
-        $this->assertSame(1, Alert::where('type', Alert::TYPE_ASSIGNMENTS_RELEASED)->where('payload->manager_id', $managerB->id)->count());
+        $this->assertSame(2, Alert::where('type', AlertType::AssignmentsReleased)->count());
+        $this->assertSame(1, Alert::where('type', AlertType::AssignmentsReleased)->where('payload->manager_id', $managerA->id)->count());
+        $this->assertSame(1, Alert::where('type', AlertType::AssignmentsReleased)->where('payload->manager_id', $managerB->id)->count());
     }
 
     public function test_release_alert_notifies_both_the_owner_and_the_pool_manager(): void
