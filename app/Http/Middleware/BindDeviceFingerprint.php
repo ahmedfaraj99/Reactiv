@@ -48,27 +48,21 @@ class BindDeviceFingerprint
             return $next($request);
         }
 
-        // Mismatch → fire alert, but only once per hour to avoid spam
-        $recent = Alert::query()
-            ->where('user_id', $user->id)
-            ->where('type', AlertType::NewDevice)
-            ->where('created_at', '>=', now()->subHour())
-            ->exists();
-
-        if (! $recent) {
-            Alert::create([
-                'tenant_id' => $user->tenant_id,
-                'user_id'   => $user->id,
-                'type'      => AlertType::NewDevice,
-                'severity'  => 'high',
-                'message'   => 'تسجيل دخول من جهاز مختلف عن المسجَّل سابقاً',
-                'payload'   => [
-                    'expected_fp' => substr($user->device_fingerprint, 0, 12).'…',
-                    'seen_fp'     => substr($fp, 0, 12).'…',
-                    'ip'          => $request->ip(),
-                ],
-            ]);
-        }
+        // Mismatch → raise an alert per unseen fingerprint. Repeated hits
+        // from the same new device bump the existing OPEN alert (no fresh
+        // mail); a genuinely different fingerprint opens a new one.
+        Alert::raise([
+            'tenant_id' => $user->tenant_id,
+            'user_id'   => $user->id,
+            'type'      => AlertType::NewDevice,
+            'severity'  => 'high',
+            'message'   => 'تسجيل دخول من جهاز مختلف عن المسجَّل سابقاً',
+            'payload'   => [
+                'expected_fp' => substr($user->device_fingerprint, 0, 12).'…',
+                'seen_fp'     => substr($fp, 0, 12).'…',
+                'ip'          => $request->ip(),
+            ],
+        ], dedupKey: "new_device:{$user->id}:".substr($fp, 0, 16));
 
         return $next($request);
     }

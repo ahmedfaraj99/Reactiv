@@ -152,14 +152,14 @@ class UnifiedLogin extends Login
             return;
         }
 
-        Alert::create([
+        Alert::raise([
             'tenant_id' => $target->tenant_id,
             'user_id'   => $target->id,
             'type'      => AlertType::LoginAttack,
             'severity'  => 'critical',
             'message'   => "محاولات دخول فاشلة متكررة على حساب {$target->name} من عنوان {$ip}",
             'payload'   => ['ip' => $ip, 'email' => $email],
-        ]);
+        ], dedupKey: "login_attack:{$target->id}:{$ip}");
     }
 
     protected function getRedirectUrl(): string
