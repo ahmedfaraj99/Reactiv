@@ -429,6 +429,11 @@ class Activation extends Page
     /**
      * The limit was hit and no request is pending yet — log it, raise one
      * alert for the supervisor, and tell the employee to wait.
+     *
+     * Idempotent per (assignment, platform): the UI already disables the
+     * button once an approval is pending, but two rapid clicks can slip
+     * past that check. Alert::raise() with a dedup key collapses the
+     * duplicate into the existing open row instead of a second alert.
      */
     protected function requestTotpApproval(string $platform): void
     {
@@ -436,7 +441,7 @@ class Activation extends Page
 
         $this->logAction('request_totp_approval', $account);
 
-        Alert::create([
+        Alert::raise([
             'tenant_id'  => $account->tenant_id,
             'user_id'    => auth()->id(),
             'account_id' => $account->id,
@@ -444,7 +449,7 @@ class Activation extends Page
             'severity'   => 'medium',
             'message'    => 'الموظف وصل لحد توليد كود '.strtoupper($platform).' ويطلب موافقة لمزيد',
             'payload'    => ['assignment_id' => $this->assignment->id, 'platform' => $platform],
-        ]);
+        ], dedupKey: "totp_limit:{$this->assignment->id}:{$platform}");
 
         Notification::make()
             ->warning()
