@@ -127,6 +127,41 @@ class User extends Authenticatable implements FilamentUser, HasTenants
         return $this->hasRole(UserRole::Employee->value);
     }
 
+    /**
+     * IDs of the employees this user is allowed to see on tenant-scoped
+     * resource lists (alerts, reveal logs, assignments awaiting review, …).
+     *  - Tenant owner: every employee in the tenant.
+     *  - Manager: employees in offices they manage.
+     *  - Supervisor: employees in their single office.
+     *  - Everyone else: nobody.
+     *
+     * Returned as a collection so callers can pass it straight to a
+     * `whereIn(..., $ids)`. Kept here because three different Filament
+     * resources were re-implementing the same query verbatim.
+     *
+     * @return \Illuminate\Support\Collection<int,int>
+     */
+    public function visibleEmployeeIds(): \Illuminate\Support\Collection
+    {
+        $base = self::query()
+            ->where('tenant_id', $this->tenant_id)
+            ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Employee->value));
+
+        if ($this->isTenantOwner()) {
+            return $base->pluck('id');
+        }
+
+        if ($this->isManager()) {
+            return $base->whereIn('office_id', $this->managedOffices()->pluck('id'))->pluck('id');
+        }
+
+        if ($this->isSupervisor()) {
+            return $base->where('office_id', $this->office_id)->pluck('id');
+        }
+
+        return collect();
+    }
+
     // ── Filament panel access ────────────────────────────────────────
 
     public function canAccessPanel(Panel $panel): bool

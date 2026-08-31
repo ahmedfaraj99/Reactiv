@@ -5,10 +5,8 @@ declare(strict_types=1);
 namespace App\Filament\App\Resources;
 
 use App\Enums\AlertSeverity;
-use App\Enums\UserRole;
 use App\Filament\App\Resources\AlertResource\Pages;
 use App\Models\Alert;
-use App\Models\User;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
@@ -77,18 +75,8 @@ class AlertResource extends Resource
         $query = parent::getEloquentQuery();
         $u = auth()->user();
 
-        if ($u?->isManager()) {
-            $employeeIds = User::query()
-                ->whereIn('office_id', $u->managedOffices()->pluck('id'))
-                ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Employee->value))
-                ->pluck('id');
-            $query->whereIn('user_id', $employeeIds);
-        } elseif ($u?->isSupervisor()) {
-            $employeeIds = User::query()
-                ->where('office_id', $u->office_id)
-                ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Employee->value))
-                ->pluck('id');
-            $query->whereIn('user_id', $employeeIds);
+        if ($u !== null && ! $u->isTenantOwner()) {
+            $query->whereIn('user_id', $u->visibleEmployeeIds());
         }
 
         return $query->with(['user', 'account']);

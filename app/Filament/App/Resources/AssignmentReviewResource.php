@@ -4,11 +4,9 @@ declare(strict_types=1);
 
 namespace App\Filament\App\Resources;
 
-use App\Enums\UserRole;
 use App\Filament\App\Resources\AssignmentReviewResource\Pages;
 use App\Models\AccountAssignment;
 use App\Models\RevealLog;
-use App\Models\User;
 use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
@@ -103,18 +101,8 @@ class AssignmentReviewResource extends Resource
         $query = parent::getEloquentQuery()->with(['account', 'employee', 'supervisor', 'reviewer']);
         $u = auth()->user();
 
-        if ($u?->isManager()) {
-            $employeeIds = User::query()
-                ->whereIn('office_id', $u->managedOffices()->pluck('id'))
-                ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Employee->value))
-                ->pluck('id');
-            $query->whereIn('employee_id', $employeeIds);
-        } elseif ($u?->isSupervisor()) {
-            $employeeIds = User::query()
-                ->where('office_id', $u->office_id)
-                ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Employee->value))
-                ->pluck('id');
-            $query->whereIn('employee_id', $employeeIds);
+        if ($u !== null && ! $u->isTenantOwner()) {
+            $query->whereIn('employee_id', $u->visibleEmployeeIds());
         }
 
         return $query;
