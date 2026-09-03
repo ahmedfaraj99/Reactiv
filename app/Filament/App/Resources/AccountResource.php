@@ -438,7 +438,11 @@ class AccountResource extends Resource
                                 ->title('النظام في وضع الطوارئ')
                                 ->body('العرض معلَّق مؤقتاً. تواصل مع المالك.')
                                 ->send();
-                            abort(423);
+                            // Halt cancels the action gracefully AND lets
+                                // Livewire flush the notification above; a raw
+                                // abort() would short-circuit the response
+                                // pipeline and the toast would never render.
+                            throw new \Filament\Support\Exceptions\Halt();
                         }
 
                         // Per-user + per-IP throttle — mirrors what the
@@ -454,7 +458,7 @@ class AccountResource extends Resource
                                 ->title('تم إيقاف العملية مؤقتاً')
                                 ->body($reason)
                                 ->send();
-                            abort(429);
+                            throw new \Filament\Support\Exceptions\Halt();
                         }
 
                         RevealLog::create([

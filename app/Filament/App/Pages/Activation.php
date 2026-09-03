@@ -473,6 +473,15 @@ class Activation extends Page
             return;
         }
 
+        // Approval by itself is not enough — the same gates that hide the
+        // primary credentials (emergency freeze, off-hours) must also hide
+        // the codes. Otherwise a page that stayed open across a freeze
+        // boundary would leak backup codes on the next poll tick while
+        // mount() would have refused everything else.
+        if ($this->assignment->tenant->isFrozen() || ! $this->guardWorkingHours()) {
+            return;
+        }
+
         $this->assignment->refresh();
         $account = $this->assignment->account;
         $this->revealedEaBackupCode1 = $account->ea_backup_code_1;
