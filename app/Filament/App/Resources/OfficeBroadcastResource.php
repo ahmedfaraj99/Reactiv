@@ -181,7 +181,9 @@ class OfficeBroadcastResource extends Resource
                 Tables\Filters\Filter::make('active')
                     ->label('النشط فقط')
                     ->default()
-                    ->query(fn (Builder $q): Builder => $q->active()),
+                    ->query(fn (Builder $q): Builder => $q->where(function (Builder $inner): void {
+                        $inner->whereNull('expires_at')->orWhere('expires_at', '>', now());
+                    })),
             ])
             ->actions([
                 Tables\Actions\Action::make('end')
