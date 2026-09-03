@@ -429,6 +429,18 @@ class AccountResource extends Resource
                     // gating + audit + rate limiting lives here; modalContent
                     // stays a pure view render.
                     ->mountUsing(function (Account $record): void {
+                        // Server-side re-assert of the visibility invariant
+                        // — the button in the row is a stale client cache
+                        // once the owner demotes a manager or reassigns
+                        // a batch, and mountUsing is otherwise the reveal
+                        // path with no guard beyond visible(). Halt here
+                        // so a just-demoted manager can't hit the modal
+                        // via a cached row.
+                        $u = auth()->user();
+                        if ($u === null || ! $u->isManager() || (int) $record->manager_id !== (int) $u->id) {
+                            throw new \Filament\Support\Exceptions\Halt();
+                        }
+
                         // Emergency freeze — the same kill switch that stops
                         // Activation from revealing credentials must stop this
                         // path too, otherwise the freeze banner lies.
@@ -678,16 +690,35 @@ class AccountResource extends Resource
 
                             DB::transaction(function () use ($movable, $managerId, $actorId): void {
                                 foreach ($movable as $account) {
+                                    // Re-fetch the assignment under
+                                    // FOR UPDATE and re-verify status
+                                    // inside the transaction. The pre-
+                                    // load snapshot can be stale — an
+                                    // employee opening credentials
+                                    // between the get() and here flips
+                                    // status to IN_PROGRESS, and a
+                                    // silent delete would strand them
+                                    // mid-activation.
+                                    $liveAssignment = $account->assignment_id !== null || $account->assignment
+                                        ? AccountAssignment::query()
+                                            ->lockForUpdate()
+                                            ->where('account_id', $account->id)
+                                            ->first()
+                                        : null;
+
+                                    if ($liveAssignment !== null && $liveAssignment->status !== AccountAssignment::STATUS_PENDING) {
+                                        // Employee raced us — leave the
+                                        // account under the old manager
+                                        // and skip. The outer notification
+                                        // still reports "أُسند N" for the
+                                        // rest of the batch; this row
+                                        // just quietly stays put.
+                                        continue;
+                                    }
+
                                     $account->update(['manager_id' => $managerId]);
-                                    // Assignment (if any) belongs to a
-                                    // supervisor under the OLD manager;
-                                    // deleting it drops the account back
-                                    // to `available` under the new one.
-                                    // Only PENDING assignments reach here
-                                    // (see filter above), so no real work
-                                    // is being erased.
-                                    if ($account->assignment !== null) {
-                                        $account->assignment->delete();
+                                    if ($liveAssignment !== null) {
+                                        $liveAssignment->delete();
                                         $account->update(['status' => 'available']);
                                     }
 

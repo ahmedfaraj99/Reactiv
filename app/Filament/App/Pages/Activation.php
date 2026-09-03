@@ -465,27 +465,33 @@ class Activation extends Page
      */
     public function checkBackupCodesApproval(): void
     {
-        $approvedAt = AccountAssignment::query()
-            ->whereKey($this->assignment->id)
-            ->value('ea_backup_codes_approved_at');
+        // Single fetch — assignment + account together. The old shape ran
+        // three queries per tick (scalar + refresh + lazy account) and,
+        // more importantly, refresh() would throw ModelNotFoundException
+        // if the owner's bulk-reassign wiped this pending assignment
+        // between ticks, 500ing the employee's page. find() short-
+        // circuits on null instead.
+        $fresh = AccountAssignment::query()
+            ->with('account', 'tenant')
+            ->find($this->assignment->id);
 
-        if ($approvedAt === null) {
+        if ($fresh === null || $fresh->ea_backup_codes_approved_at === null) {
             return;
         }
 
-        // Approval by itself is not enough — the same gates that hide the
-        // primary credentials (emergency freeze, off-hours) must also hide
-        // the codes. Otherwise a page that stayed open across a freeze
-        // boundary would leak backup codes on the next poll tick while
-        // mount() would have refused everything else.
-        if ($this->assignment->tenant->isFrozen() || ! $this->guardWorkingHours()) {
+        // Same gates that hide the primary credentials must also hide the
+        // codes — otherwise a page that stayed open across a freeze
+        // boundary would leak backup codes on the next poll tick. Use the
+        // silent predicate (not the notifying guard) so a page kept open
+        // past work_end_hour doesn't stack a "خارج ساعات العمل" toast
+        // every 4 seconds.
+        if ($fresh->tenant->isFrozen() || ! self::withinWorkingHours()) {
             return;
         }
 
-        $this->assignment->refresh();
-        $account = $this->assignment->account;
-        $this->revealedEaBackupCode1 = $account->ea_backup_code_1;
-        $this->revealedEaBackupCode2 = $account->ea_backup_code_2;
+        $this->assignment = $fresh;
+        $this->revealedEaBackupCode1 = $fresh->account->ea_backup_code_1;
+        $this->revealedEaBackupCode2 = $fresh->account->ea_backup_code_2;
     }
 
     public function hasPendingBackupCodesRequest(): bool
@@ -797,17 +803,12 @@ class Activation extends Page
      */
     protected function guardWorkingHours(): bool
     {
-        if (! config('fc27ac.enforce_work_hours')) {
+        if (self::withinWorkingHours()) {
             return true;
         }
 
-        $hour = (int) now()->format('G');
         $start = (int) config('fc27ac.work_start_hour');
         $end   = (int) config('fc27ac.work_end_hour');
-
-        if ($hour >= $start && $hour < $end) {
-            return true;
-        }
 
         Notification::make()
             ->danger()
@@ -816,6 +817,26 @@ class Activation extends Page
             ->send();
 
         return false;
+    }
+
+    /**
+     * Silent predicate — the same window guardWorkingHours enforces, but
+     * without the user-visible notification. Poll targets (which fire on
+     * their own schedule) must consume this instead of the guard, so a
+     * page that lingers past work_end_hour doesn't stack a "خارج ساعات
+     * العمل" toast every few seconds.
+     */
+    public static function withinWorkingHours(): bool
+    {
+        if (! config('fc27ac.enforce_work_hours')) {
+            return true;
+        }
+
+        $hour  = (int) now()->format('G');
+        $start = (int) config('fc27ac.work_start_hour');
+        $end   = (int) config('fc27ac.work_end_hour');
+
+        return $hour >= $start && $hour < $end;
     }
 
     /**
