@@ -46,7 +46,7 @@ class User extends Authenticatable implements FilamentUser, HasTenants
 
     protected $fillable = [
         'tenant_id', 'office_id',
-        'name', 'email', 'phone', 'password',
+        'name', 'email', 'email_verified_at', 'phone', 'password',
         'google2fa_secret', 'google2fa_enabled',
         'device_fingerprint', 'last_login_ip', 'last_login_at', 'active',
         'requires_proof',

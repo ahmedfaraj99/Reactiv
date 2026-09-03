@@ -53,12 +53,20 @@ abstract class TestCase extends BaseTestCase
     protected function makeUser(Tenant $tenant, UserRole $role, ?Office $office = null, array $attributes = []): User
     {
         $user = User::create(array_merge([
-            'tenant_id' => $tenant->id,
-            'office_id' => $office?->id,
-            'name'      => $role->label().' اختبار',
-            'email'     => strtolower($role->value).'-'.uniqid().'@test.local',
-            'password'  => Hash::make('Password!123'),
-            'active'    => true,
+            'tenant_id'         => $tenant->id,
+            'office_id'         => $office?->id,
+            'name'              => $role->label().' اختبار',
+            'email'             => strtolower($role->value).'-'.uniqid().'@test.local',
+            'password'          => Hash::make('Password!123'),
+            'active'            => true,
+            // Established user by default — canAccessPanel refuses login
+            // until email is verified, and the EnsureTwoFactorEnrolled
+            // middleware redirects the request to /2fa/setup until the
+            // secret is enrolled. Both defaults let tests exercise app
+            // pages directly; tests targeting the invitation or 2FA
+            // setup flow override with null / false as needed.
+            'email_verified_at' => now(),
+            'google2fa_enabled' => true,
         ], $attributes));
 
         $user->assignRole($role->value);
@@ -102,6 +110,12 @@ abstract class TestCase extends BaseTestCase
         \Filament\Facades\Filament::setCurrentPanel(\Filament\Facades\Filament::getPanel('app'));
         $this->actingAs($user);
         \Filament\Facades\Filament::setTenant($user->tenant);
+
+        // The RequireTwoFactorVerified middleware redirects to /2fa/verify
+        // unless the current session carries this flag. Every test that
+        // impersonates an established user should skip that redirect —
+        // we're modeling "logged in and already verified".
+        session()->put('google2fa.verified_at', now());
 
         return $this;
     }

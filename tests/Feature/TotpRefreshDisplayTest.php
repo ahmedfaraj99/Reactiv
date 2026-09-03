@@ -23,6 +23,13 @@ class TotpRefreshDisplayTest extends TestCase
 {
     public function test_refresh_recomputes_the_visible_code_without_bumping_the_allowance_counter(): void
     {
+        // Lock time so the TOTP window doesn't roll over between the
+        // pre-mount code seed and refreshTotpDisplay's re-compute.
+        // Without this the test flakes ~1 second in 30 whenever it
+        // straddles a 30s boundary and refreshTotpDisplay correctly
+        // clears the (now-stale) code.
+        \Illuminate\Support\Carbon::setTestNow('2026-09-03 12:00:15');
+
         $tenant = $this->makeTenant();
         $office = $this->makeOffice($tenant);
         $employee = $this->makeUser($tenant, UserRole::Employee, $office);
@@ -34,8 +41,15 @@ class TotpRefreshDisplayTest extends TestCase
 
         $this->actingAsTenantUser($employee);
 
+        // Seed the CURRENT code — refreshTotpDisplay compares against
+        // the generated value and clears the property when it doesn't
+        // match (that's the "one generation = one 30s window" rule).
+        // A hard-coded '123456' would fail that compare and mask the
+        // real behavior we want to verify.
+        $currentPsn = app(\App\Services\TotpService::class)->currentCode($account->psn_totp_seed)['code'];
+
         $component = Livewire::test(Activation::class, ['assignment' => $assignment])
-            ->set('totpCodePsn', '123456')
+            ->set('totpCodePsn', $currentPsn)
             ->set('totpSecondsLeft', 0)
             ->call('refreshTotpDisplay');
 
