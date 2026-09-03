@@ -93,9 +93,28 @@ class Activation extends Page
         $tenantId = (int) auth()->user()?->tenant_id;
 
         return [
-            'echo-private:user.'.$userId.',.totp.approved'         => 'onTotpApproved',
-            'echo-private:tenant.'.$tenantId.',.tenant.freeze'     => '$refresh',
+            'echo-private:user.'.$userId.',.totp.approved'             => 'onTotpApproved',
+            'echo-private:user.'.$userId.',.backup_codes.approved'     => 'onBackupCodesApproved',
+            'echo-private:tenant.'.$tenantId.',.tenant.freeze'         => '$refresh',
         ];
+    }
+
+    public function onBackupCodesApproved(array $payload = []): void
+    {
+        if (($payload['assignmentId'] ?? null) !== $this->assignment->id) {
+            return;
+        }
+
+        $this->assignment->refresh();
+        $account = $this->assignment->account;
+        $this->revealedEaBackupCode1 = $account->ea_backup_code_1;
+        $this->revealedEaBackupCode2 = $account->ea_backup_code_2;
+
+        Notification::make()
+            ->success()
+            ->title('تمت الموافقة على عرض Backup Codes')
+            ->body('الأكواد ظاهرة الآن في صفحة التفعيل.')
+            ->send();
     }
 
     public function onTotpApproved(array $payload = []): void
@@ -192,8 +211,15 @@ class Activation extends Page
             $this->revealedPsnPassword = $account->psn_password;
             $this->revealedEaEmail     = $account->effectiveEaEmail();
             $this->revealedEaPassword  = $account->effectiveEaPassword();
-            $this->revealedEaBackupCode1 = $account->ea_backup_code_1;
-            $this->revealedEaBackupCode2 = $account->ea_backup_code_2;
+
+            // Backup codes are a manager-gated fallback for EA TOTP failures
+            // — never revealed alongside the credentials. Only surfaced
+            // after a supervisor/manager approves an explicit request
+            // (see requestBackupCodesAction below).
+            if ($this->assignment->ea_backup_codes_approved_at !== null) {
+                $this->revealedEaBackupCode1 = $account->ea_backup_code_1;
+                $this->revealedEaBackupCode2 = $account->ea_backup_code_2;
+            }
 
             $this->logAction('reveal_credentials', $account);
 
@@ -369,6 +395,74 @@ class Activation extends Page
         }
 
         $this->refreshTotpDisplay($totp);
+    }
+
+    /**
+     * "طلب Backup Codes" — a manager-gated fallback for when EA TOTP
+     * misbehaves. The employee cannot see the codes on their own; a
+     * supervisor or the manager over their office has to evaluate the
+     * request and approve it. Same alert-and-approval shape as the
+     * TOTP-limit request above so operators only learn one workflow.
+     */
+    public function requestBackupCodesAction(): Action
+    {
+        return Action::make('requestBackupCodes')
+            ->label(function (): string {
+                if ($this->assignment->ea_backup_codes_approved_at !== null) {
+                    return 'Backup Codes متاحة';
+                }
+                return $this->hasPendingBackupCodesRequest()
+                    ? 'بانتظار موافقة المشرف على Backup Codes'
+                    : 'طلب Backup Codes';
+            })
+            ->icon(fn (): string => $this->assignment->ea_backup_codes_approved_at !== null
+                ? 'heroicon-o-shield-check'
+                : 'heroicon-o-paper-airplane')
+            ->color(fn (): string => $this->assignment->ea_backup_codes_approved_at !== null
+                ? 'success'
+                : 'warning')
+            ->visible(fn (): bool => $this->assignment->account->hasEaBackupCodes())
+            ->disabled(fn (): bool => $this->isLocked()
+                || $this->assignment->ea_backup_codes_approved_at !== null
+                || $this->hasPendingBackupCodesRequest())
+            ->requiresConfirmation()
+            ->modalHeading('طلب Backup Codes')
+            ->modalDescription('يُرسَل طلب للمشرف/المدير لتقييم ما إذا كنت تحتاج أكواد الاحتياط لتجاوز مشكلة TOTP. لن تظهر الأكواد إلا بعد الموافقة.')
+            ->action(function (): void {
+                if (! $this->guardSensitiveAction() || ! $this->guardWorkingHours()) {
+                    return;
+                }
+
+                $account = $this->assignment->account;
+
+                $this->logAction('request_backup_codes', $account);
+
+                Alert::raise([
+                    'tenant_id'  => $account->tenant_id,
+                    'user_id'    => auth()->id(),
+                    'account_id' => $account->id,
+                    'type'       => AlertType::BackupCodesReveal,
+                    'severity'   => 'medium',
+                    'message'    => 'الموظف يطلب عرض Backup Codes بسبب مشكلة في TOTP',
+                    'payload'    => ['assignment_id' => $this->assignment->id],
+                ], dedupKey: "backup_codes_reveal:{$this->assignment->id}");
+
+                Notification::make()
+                    ->warning()
+                    ->title('أُرسل طلب Backup Codes للمشرف')
+                    ->body('ستظهر الأكواد بعد الموافقة.')
+                    ->send();
+            });
+    }
+
+    public function hasPendingBackupCodesRequest(): bool
+    {
+        return Alert::query()
+            ->where('type', AlertType::BackupCodesReveal)
+            ->where('resolved', false)
+            ->where('user_id', auth()->id())
+            ->whereJsonContains('payload->assignment_id', $this->assignment->id)
+            ->exists();
     }
 
     public function hasPendingTotpApproval(string $platform): bool

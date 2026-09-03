@@ -85,7 +85,8 @@ class AlertObserver
     private function isUrgent(Alert $alert): bool
     {
         return in_array($alert->severity, [AlertSeverity::Critical, AlertSeverity::High], true)
-            || $alert->type === AlertType::TotpLimit;
+            || $alert->type === AlertType::TotpLimit
+            || $alert->type === AlertType::BackupCodesReveal;
     }
 
     /**

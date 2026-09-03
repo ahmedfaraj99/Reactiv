@@ -194,6 +194,56 @@ class AlertResource extends Resource
                         Notification::make()->success()->title('تمت الموافقة — يقدر الموظف يولّد كوداً إضافياً الآن')->send();
                     }),
 
+                Tables\Actions\Action::make('approveBackupCodes')
+                    ->label('وافق على عرض Backup Codes')
+                    ->icon('heroicon-o-key')
+                    ->color('primary')
+                    ->visible(fn (Alert $r): bool => ! $r->resolved && $r->type === AlertType::BackupCodesReveal)
+                    ->requiresConfirmation()
+                    ->modalDescription('سيتمكن الموظف من رؤية Backup Codes على صفحة التفعيل مباشرة. لا يمكن التراجع.')
+                    ->action(function (Alert $record): void {
+                        $granted = DB::transaction(function () use ($record): bool {
+                            $locked = Alert::query()->lockForUpdate()->find($record->id);
+                            if ($locked === null || $locked->resolved) {
+                                return false;
+                            }
+
+                            $assignmentId = $locked->payload['assignment_id'] ?? null;
+                            $assignment = $assignmentId !== null
+                                ? \App\Models\AccountAssignment::find($assignmentId)
+                                : null;
+
+                            if ($assignment !== null && $assignment->ea_backup_codes_approved_at === null) {
+                                $assignment->update([
+                                    'ea_backup_codes_approved_at' => now(),
+                                    'ea_backup_codes_approved_by' => auth()->id(),
+                                ]);
+                            }
+
+                            $locked->update([
+                                'resolved'    => true,
+                                'resolved_by' => auth()->id(),
+                                'resolved_at' => now(),
+                            ]);
+
+                            return true;
+                        });
+
+                        if ($granted) {
+                            $assignmentId = $record->payload['assignment_id'] ?? null;
+                            if ($assignmentId !== null) {
+                                \App\Events\BackupCodesRevealApproved::dispatch(
+                                    (int) $record->user_id,
+                                    (int) $assignmentId,
+                                );
+                            }
+                            Notification::make()->success()->title('تمت الموافقة — الأكواد ظاهرة للموظف الآن')->send();
+                            return;
+                        }
+
+                        Notification::make()->warning()->title('تمت معالجة هذا الطلب مسبقاً')->send();
+                    }),
+
                 Tables\Actions\Action::make('resolve')
                     ->label('حل')
                     ->icon('heroicon-o-check')

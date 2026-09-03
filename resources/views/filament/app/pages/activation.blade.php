@@ -281,11 +281,20 @@
 
                                 @if ($assignment->account->hasEaBackupCodes())
                                     <div>
-                                        <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">أكواد احتياط EA</p>
-                                        <div class="grid grid-cols-1 gap-2">
-                                            @include('filament.app.pages.partials.credential', ['value' => $revealedEaBackupCode1, 'id' => 'cred-ea-backup-1'])
-                                            @include('filament.app.pages.partials.credential', ['value' => $revealedEaBackupCode2, 'id' => 'cred-ea-backup-2'])
-                                        </div>
+                                        <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">Backup Codes (EA)</p>
+                                        @if ($assignment->ea_backup_codes_approved_at !== null)
+                                            <div class="grid grid-cols-1 gap-2">
+                                                @include('filament.app.pages.partials.credential', ['value' => $revealedEaBackupCode1, 'id' => 'cred-ea-backup-1'])
+                                                @include('filament.app.pages.partials.credential', ['value' => $revealedEaBackupCode2, 'id' => 'cred-ea-backup-2'])
+                                            </div>
+                                        @else
+                                            <div class="rounded-md border border-dashed border-gray-300 bg-gray-50 p-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                                                Backup Codes مخفية — اضغط "طلب Backup Codes" أدناه فقط إذا فشل TOTP، وينتظر موافقة المشرف/المدير.
+                                            </div>
+                                            <div class="mt-2">
+                                                {{ $this->requestBackupCodesAction }}
+                                            </div>
+                                        @endif
                                     </div>
                                 @endif
                             </div>

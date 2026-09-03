@@ -11,6 +11,7 @@ enum AlertType: string
     case OffHours            = 'off_hours';
     case HighVolume          = 'high_volume';
     case TotpLimit           = 'totp_limit';
+    case BackupCodesReveal   = 'backup_codes_reveal';
     case LoginAttack         = 'login_attack';
     case AssignmentOverdue   = 'assignment_overdue';
     case AssignmentsReleased = 'assignments_released';
@@ -26,6 +27,7 @@ enum AlertType: string
             self::OffHours            => 'خارج ساعات العمل',
             self::HighVolume          => 'حجم غير طبيعي',
             self::TotpLimit           => 'طلب كود إضافي',
+            self::BackupCodesReveal   => 'طلب Backup Codes',
             self::LoginAttack         => 'محاولات دخول مشبوهة',
             self::AssignmentOverdue   => 'تخصيص متأخر',
             self::AssignmentsReleased => 'حسابات محررة تحتاج إعادة توزيع',

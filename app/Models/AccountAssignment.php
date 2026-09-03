@@ -39,6 +39,7 @@ class AccountAssignment extends Model
         'proof_path', 'proof_hash', 'submitted_at', 'reviewed_by', 'reviewed_at', 'rejection_reason',
         'psn_totp_generations', 'ea_totp_generations',
         'psn_totp_extra_allowed', 'ea_totp_extra_allowed',
+        'ea_backup_codes_approved_at', 'ea_backup_codes_approved_by',
     ];
 
     protected function casts(): array
@@ -51,6 +52,7 @@ class AccountAssignment extends Model
             'completed_at'            => 'datetime',
             'submitted_at'            => 'datetime',
             'reviewed_at'             => 'datetime',
+            'ea_backup_codes_approved_at' => 'datetime',
         ];
     }
 
