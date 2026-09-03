@@ -8,8 +8,10 @@ use App\Enums\UserRole;
 use App\Filament\App\Resources\AccountResource\Pages;
 use App\Models\Account;
 use App\Models\AccountAssignment;
+use App\Models\RevealLog;
 use App\Models\User;
 use App\Services\AccountImportService;
+use App\Services\TotpService;
 use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
@@ -404,6 +406,52 @@ class AccountResource extends Resource
                     }),
             ])
             ->actions([
+                // The owner uploads a batch FOR a specific manager; the
+                // manager may need to inspect an account's credentials to
+                // hand them off, help a stuck employee, or verify a client
+                // complaint. Scoped to accounts in the manager's own
+                // batches, and every open is written to reveal_logs so
+                // the audit trail matches the employee's activation view.
+                Tables\Actions\Action::make('viewCredentials')
+                    ->label('عرض البيانات')
+                    ->icon('heroicon-o-eye')
+                    ->color('warning')
+                    ->visible(fn (Account $record): bool => auth()->user()?->isManager()
+                        && $record->manager_id === auth()->id())
+                    ->modalHeading(fn (Account $record): string => 'بيانات الحساب #'.$record->id)
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel('إغلاق')
+                    ->modalContent(function (Account $record): \Illuminate\Contracts\View\View {
+                        RevealLog::create([
+                            'tenant_id'          => $record->tenant_id,
+                            'user_id'            => (int) auth()->id(),
+                            'account_id'         => $record->id,
+                            'action'             => 'manager_view_credentials',
+                            'ip'                 => request()->ip(),
+                            'user_agent'         => substr((string) request()->userAgent(), 0, 500),
+                            'device_fingerprint' => request()->cookie('fc_fp'),
+                            'created_at'         => now(),
+                        ]);
+
+                        $totp = app(TotpService::class);
+
+                        // Backup codes are intentionally NOT surfaced here —
+                        // they're a manager-gated fallback that only reaches
+                        // the employee via an approved BackupCodesReveal
+                        // request (see Activation::requestBackupCodesAction).
+                        return view('filament.app.resources.account-resource.credentials-modal', [
+                            'account'      => $record,
+                            'psn_email'    => $record->email,
+                            'psn_password' => $record->psn_password,
+                            'ea_email'     => $record->effectiveEaEmail(),
+                            'ea_password'  => $record->effectiveEaPassword(),
+                            'psn_totp'     => $totp->currentCode($record->psn_totp_seed),
+                            'ea_totp'      => $totp->currentCode($record->ea_totp_seed),
+                            'backup1'      => null,
+                            'backup2'      => null,
+                        ]);
+                    }),
+
                 // Free-text channel between manager/supervisor and the
                 // employee working the account — shows up read-only on the
                 // employee's "حساباتي" list (see MyAccounts). Shares the

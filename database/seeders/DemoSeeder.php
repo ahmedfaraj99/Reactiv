@@ -57,7 +57,7 @@ class DemoSeeder extends Seeder
             $supervisor = $this->makeUser($tenant, $office, 'supervisor@demo.local', 'مشرف مكتب طرابلس', UserRole::Supervisor);
             $employee   = $this->makeUser($tenant, $office, 'employee@demo.local', 'موظف الديمو', UserRole::Employee);
 
-            $accounts = $this->makeAccounts($tenant, $owner);
+            $accounts = $this->makeAccounts($tenant, $owner, $manager);
 
             // Pre-assign the first account so the employee lands on
             // something ready to activate.
@@ -103,22 +103,26 @@ class DemoSeeder extends Seeder
     }
 
     /** @return \Illuminate\Support\Collection<int, Account> */
-    private function makeAccounts(Tenant $tenant, User $uploader)
+    private function makeAccounts(Tenant $tenant, User $uploader, User $manager)
     {
         // Real Base32 TOTP secrets — these actually generate valid 2FA codes.
         // JBSWY3DPEHPK3PXP is the classic google2fa test vector; add these
         // to Google Authenticator manually to see codes matching the app.
         // Each account is one email + a PSN pair + an EA pair. Account #1
         // shows the common case (EA shares the primary email); account #2
-        // shows the exceptional case (EA has its own email).
+        // shows the exceptional case (EA has its own email) plus EA backup
+        // codes — the manager's "view credentials" modal only surfaces the
+        // backup-codes row when the pair is present.
         $seeds = [
             [
                 'email' => 'demo-1@example.com', 'psnPassword' => 'PsnPass!01', 'psnSeed' => 'JBSWY3DPEHPK3PXP',
                 'eaEmail' => null, 'eaPassword' => 'EaPass!001', 'eaSeed' => 'ONSWG4TFOQ2XG4Q=',
+                'backup1' => null, 'backup2' => null,
             ],
             [
                 'email' => 'demo-psn-2@example.com', 'psnPassword' => 'PsnPass!02', 'psnSeed' => 'NB2W45DFOIZA4TZI',
                 'eaEmail' => 'demo-ea-2@example.com', 'eaPassword' => 'EaPass!002', 'eaSeed' => 'MFRGGZDFMZTWQ2LK',
+                'backup1' => 'AB12-CD34', 'backup2' => 'EF56-GH78',
             ],
         ];
 
@@ -137,8 +141,11 @@ class DemoSeeder extends Seeder
                     'ea_email_fingerprint' => $eaFp,
                     'ea_password'          => $seed['eaPassword'],
                     'ea_totp_seed'         => $seed['eaSeed'],
+                    'ea_backup_code_1'     => $seed['backup1'],
+                    'ea_backup_code_2'     => $seed['backup2'],
                     'status'               => 'available',
                     'uploaded_by'          => $uploader->id,
+                    'manager_id'           => $manager->id,
                 ],
             );
             $created->push($account);
