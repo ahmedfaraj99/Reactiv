@@ -550,6 +550,92 @@ class AccountResource extends Resource
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
+                    // Owner-only: hand a batch of existing accounts to a
+                    // different manager without re-uploading the Excel.
+                    // Covers "wrong manager picked at import", staff
+                    // reshuffles, or spreading an oversized batch across
+                    // two managers. Only accounts that haven't been
+                    // opened yet are moved — a revealed account is
+                    // already in an employee's hands under the current
+                    // manager's supervisor, and moving it silently would
+                    // strand that work. Also wipes the assignment for
+                    // moved rows so the new manager's supervisors start
+                    // from a clean queue.
+                    Tables\Actions\BulkAction::make('assign_to_manager_bulk')
+                        ->label('إسناد إلى مدير')
+                        ->icon('heroicon-o-user-plus')
+                        ->color('primary')
+                        ->visible(fn (): bool => auth()->user()?->isTenantOwner() ?? false)
+                        ->form([
+                            Forms\Components\Select::make('manager_id')
+                                ->label('المدير المستهدف')
+                                ->helperText('الحسابات المحددة ستنتقل إلى هذا المدير والمشرفين التابعين له فقط.')
+                                ->options(function (): array {
+                                    $tenant = filament()->getTenant();
+                                    if ($tenant === null) {
+                                        return [];
+                                    }
+                                    return User::query()
+                                        ->where('tenant_id', $tenant->id)
+                                        ->where('active', true)
+                                        ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Manager->value))
+                                        ->orderBy('name')
+                                        ->pluck('name', 'id')
+                                        ->all();
+                                })
+                                ->searchable()
+                                ->preload()
+                                ->required(),
+                        ])
+                        ->action(function (Collection $records, array $data): void {
+                            $tenant = filament()->getTenant();
+                            if ($tenant === null) {
+                                return;
+                            }
+
+                            $managerId = (int) $data['manager_id'];
+                            $manager = User::query()
+                                ->where('tenant_id', $tenant->id)
+                                ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Manager->value))
+                                ->find($managerId);
+                            if ($manager === null) {
+                                Notification::make()->danger()->title('المدير غير موجود')->send();
+                                return;
+                            }
+
+                            $movable = $records->filter(function (Account $a): bool {
+                                $assignment = $a->assignment;
+                                return $assignment === null || $assignment->credentials_revealed_at === null;
+                            });
+                            $skipped = $records->count() - $movable->count();
+
+                            if ($movable->isEmpty()) {
+                                Notification::make()->warning()->title('لا يوجد حسابات قابلة للنقل (كلها قيد التنفيذ)')->send();
+                                return;
+                            }
+
+                            DB::transaction(function () use ($movable, $managerId): void {
+                                foreach ($movable as $account) {
+                                    $account->update(['manager_id' => $managerId]);
+                                    // Assignment (if any) belongs to a
+                                    // supervisor under the OLD manager;
+                                    // deleting it drops the account back
+                                    // to `available` under the new one.
+                                    if ($account->assignment !== null) {
+                                        $account->assignment->delete();
+                                        $account->update(['status' => 'available']);
+                                    }
+                                }
+                            });
+
+                            Notification::make()
+                                ->success()
+                                ->title('أُسند '.$movable->count().' حساباً إلى '.$manager->name)
+                                ->body($skipped > 0 ? "تُجُوهل {$skipped} حساباً قيد التنفيذ" : null)
+                                ->send();
+                        })
+                        ->deselectRecordsAfterCompletion(),
+
                     // Fast redistribution for the everyday case: an
                     // employee is out, or a supervisor wants to spread
                     // a big batch across the whole team in one shot.
