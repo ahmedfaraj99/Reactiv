@@ -215,6 +215,18 @@ class UserResource extends Resource
                         ->label('نشط')
                         ->default(true)
                         ->inline(false),
+
+                    // Per-employee trust flag: when ON, every activation
+                    // by this employee requires a proof photo; when OFF,
+                    // proof is optional. Only meaningful for employees —
+                    // supervisors/managers never activate accounts, so
+                    // hide the toggle from their edit forms.
+                    Forms\Components\Toggle::make('requires_proof')
+                        ->label('يتطلب صورة إثبات عند التفعيل')
+                        ->helperText('افتراضياً مُفعَّل. أطفئه للموظفين الموثوقين لجعل رفع الإثبات اختياري في تفعيلاتهم.')
+                        ->default(true)
+                        ->inline(false)
+                        ->visible(fn (): bool => self::managedRole() === UserRole::Employee),
                 ]),
         ]);
     }
@@ -265,6 +277,19 @@ class UserResource extends Resource
                 Tables\Columns\IconColumn::make('active')
                     ->label('نشط')
                     ->boolean(),
+
+                Tables\Columns\IconColumn::make('requires_proof')
+                    ->label('إثبات إلزامي')
+                    ->boolean()
+                    ->trueIcon('heroicon-o-camera')
+                    ->trueColor('warning')
+                    ->falseIcon('heroicon-o-check-badge')
+                    ->falseColor('success')
+                    ->tooltip(fn (User $record): string => $record->requires_proof
+                        ? 'موظف يتطلب رفع صورة إثبات لكل تفعيل'
+                        : 'موظف موثوق — رفع الإثبات اختياري')
+                    ->visible(fn (): bool => self::managedRole() === UserRole::Employee)
+                    ->toggleable(),
 
                 Tables\Columns\IconColumn::make('google2fa_enabled')
                     ->label('2FA')

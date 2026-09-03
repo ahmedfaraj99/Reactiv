@@ -49,9 +49,17 @@ class User extends Authenticatable implements FilamentUser, HasTenants
         'name', 'email', 'phone', 'password',
         'google2fa_secret', 'google2fa_enabled',
         'device_fingerprint', 'last_login_ip', 'last_login_at', 'active',
+        'requires_proof',
     ];
 
     protected $hidden = ['password', 'remember_token', 'google2fa_secret'];
+
+    // Model-level defaults so a freshly-created User (via ::create or the
+    // form) reflects the DB column defaults without needing a ->fresh()
+    // round-trip. Kept in sync with the migration column defaults.
+    protected $attributes = [
+        'requires_proof' => true,
+    ];
 
     protected function casts(): array
     {
@@ -62,6 +70,7 @@ class User extends Authenticatable implements FilamentUser, HasTenants
             'google2fa_secret'   => 'encrypted',
             'google2fa_enabled'  => 'boolean',
             'active'             => 'boolean',
+            'requires_proof'     => 'boolean',
         ];
     }
 

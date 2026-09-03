@@ -593,28 +593,36 @@ class Activation extends Page
 
     public function completeAction(): Action
     {
-        // Proof is optional for every account now — the audit trail
-        // (reveal_logs, TOTP counts, timing) plus the reviewer's own
-        // judgement is what catches fraud. Forcing a photo on every
-        // activation slowed the floor down without a matching gain,
-        // per the office managers' feedback.
+        // Proof is now per-employee: the default is required (safer for
+        // new / less-trusted staff), and a manager can toggle it off on
+        // a trusted employee via UserResource. This replaced the flat
+        // "optional for everyone" and the earlier "mandatory for
+        // everyone" — both had complaining users. The employee's row
+        // is the source of truth checked below on both the form field
+        // and the action closure.
+        $requiresProof = (bool) $this->assignment->employee->requires_proof;
+
         return Action::make('complete')
             ->label('إنهاء التفعيل')
             ->icon('heroicon-o-check-circle')
             ->color('success')
             ->requiresConfirmation()
             ->modalHeading('إنهاء التفعيل')
-            ->modalDescription('رفع صورة الإثبات اختياري — تقدر ترفعها لو حابب، أو تخلص من غير.')
+            ->modalDescription($requiresProof
+                ? 'رفع صورة الإثبات مطلوب لهذا التفعيل. التقط بكاميرا الموبايل لشاشة التلفزيون.'
+                : 'رفع صورة الإثبات اختياري — تقدر ترفعها لو حابب، أو تخلص من غير.')
             ->disabled(fn (): bool => $this->isLocked())
             ->form([
                 FileUpload::make('proof_path')
-                    ->label('صورة إثبات التفعيل (اختياري)')
-                    ->helperText(function (): string {
+                    ->label($requiresProof ? 'صورة إثبات التفعيل' : 'صورة إثبات التفعيل (اختياري)')
+                    ->required($requiresProof)
+                    ->helperText(function () use ($requiresProof): string {
                         $account = $this->assignment->account;
+                        $prefix = $requiresProof ? 'مطلوب' : 'اختياري';
                         if ($account->requiresMatches()) {
-                            return "اختياري — لو رفعتها، التقط بكاميرا الموبايل لشاشة التلفزيون بعد إنهاء الـ {$account->matches_required} مباريات وتُظهر أرباح المباريات (Match Rewards / MVP). صورة المتصفح لا تُحسب إثباتاً.";
+                            return "{$prefix} — التقط بكاميرا الموبايل لشاشة التلفزيون بعد إنهاء الـ {$account->matches_required} مباريات وتُظهر أرباح المباريات (Match Rewards / MVP). صورة المتصفح لا تُحسب إثباتاً.";
                         }
-                        return 'اختياري — لو رفعتها ارفع صورة من كاميرا الموبايل لشاشة التلفزيون. صورة المتصفح لا تُحسب إثباتاً.';
+                        return "{$prefix} — ارفع صورة من كاميرا الموبايل لشاشة التلفزيون. صورة المتصفح لا تُحسب إثباتاً.";
                     })
                     ->image()
                     ->disk('local')
@@ -623,6 +631,20 @@ class Activation extends Page
             ])
             ->action(function (array $data, ProofImageProcessor $processor): void {
                 $relativePath = ! empty($data['proof_path']) ? (string) $data['proof_path'] : null;
+
+                // Server-side re-assert of the per-employee proof rule —
+                // a hand-crafted Livewire payload could bypass the form
+                // ->required() marker and submit without a file. Refuse
+                // the submission cleanly in that case; the toast tells
+                // the employee what to do.
+                if ($relativePath === null && (bool) $this->assignment->employee->requires_proof) {
+                    Notification::make()
+                        ->danger()
+                        ->title('صورة الإثبات مطلوبة')
+                        ->body('مديرك اشترط رفع صورة إثبات لكل تفعيل من حسابك.')
+                        ->send();
+                    return;
+                }
 
                 // Hash the pristine bytes, then burn the watermark into
                 // the stored file. Failure to process (unreadable file,
