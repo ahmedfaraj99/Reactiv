@@ -11,6 +11,7 @@ use App\Models\AccountAssignment;
 use App\Models\RevealLog;
 use App\Models\User;
 use App\Services\AccountImportService;
+use App\Services\RevealRateLimiter;
 use App\Services\TotpService;
 use Filament\Forms;
 use Filament\Notifications\Notification;
@@ -417,11 +418,45 @@ class AccountResource extends Resource
                     ->icon('heroicon-o-eye')
                     ->color('warning')
                     ->visible(fn (Account $record): bool => auth()->user()?->isManager()
-                        && $record->manager_id === auth()->id())
+                        && (int) $record->manager_id === (int) auth()->id())
                     ->modalHeading(fn (Account $record): string => 'بيانات الحساب #'.$record->id)
                     ->modalSubmitAction(false)
                     ->modalCancelActionLabel('إغلاق')
-                    ->modalContent(function (Account $record): \Illuminate\Contracts\View\View {
+                    // mountUsing runs ONCE when the modal opens; modalContent
+                    // is re-invoked on every Livewire re-render (the table
+                    // polls every 10s), so any side effect written there
+                    // would insert a new RevealLog row on each poll. All
+                    // gating + audit + rate limiting lives here; modalContent
+                    // stays a pure view render.
+                    ->mountUsing(function (Account $record): void {
+                        // Emergency freeze — the same kill switch that stops
+                        // Activation from revealing credentials must stop this
+                        // path too, otherwise the freeze banner lies.
+                        if ($record->tenant->isFrozen()) {
+                            Notification::make()
+                                ->danger()
+                                ->title('النظام في وضع الطوارئ')
+                                ->body('العرض معلَّق مؤقتاً. تواصل مع المالك.')
+                                ->send();
+                            abort(423);
+                        }
+
+                        // Per-user + per-IP throttle — mirrors what the
+                        // employee reveal enforces, so a compromised or
+                        // abusive manager can't dump every account's
+                        // credentials in a loop.
+                        $limiter = app(RevealRateLimiter::class);
+                        $reason = $limiter->check(auth()->user(), (string) request()->ip(), 'reveal_credentials');
+                        if ($reason !== null) {
+                            $limiter->raiseAlert(auth()->user(), 'manager_view_credentials', $reason, $record->id);
+                            Notification::make()
+                                ->danger()
+                                ->title('تم إيقاف العملية مؤقتاً')
+                                ->body($reason)
+                                ->send();
+                            abort(429);
+                        }
+
                         RevealLog::create([
                             'tenant_id'          => $record->tenant_id,
                             'user_id'            => (int) auth()->id(),
@@ -432,7 +467,8 @@ class AccountResource extends Resource
                             'device_fingerprint' => request()->cookie('fc_fp'),
                             'created_at'         => now(),
                         ]);
-
+                    })
+                    ->modalContent(function (Account $record): \Illuminate\Contracts\View\View {
                         $totp = app(TotpService::class);
 
                         // Backup codes are intentionally NOT surfaced here —
@@ -596,6 +632,7 @@ class AccountResource extends Resource
                             $managerId = (int) $data['manager_id'];
                             $manager = User::query()
                                 ->where('tenant_id', $tenant->id)
+                                ->where('active', true)
                                 ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Manager->value))
                                 ->find($managerId);
                             if ($manager === null) {
@@ -603,9 +640,28 @@ class AccountResource extends Resource
                                 return;
                             }
 
-                            $movable = $records->filter(function (Account $a): bool {
+                            // Re-load the selected accounts scoped to THIS
+                            // tenant — the Livewire payload is client-
+                            // controlled and could smuggle account ids from
+                            // another tenant. Filament's list scoping
+                            // catches this on the display query, not on the
+                            // bulk-action Collection parameter.
+                            $ids = $records->pluck('id')->all();
+                            $scoped = Account::query()
+                                ->with('assignment')
+                                ->where('tenant_id', $tenant->id)
+                                ->whereIn('id', $ids)
+                                ->get();
+
+                            // Only reassign truly-pending rows. An
+                            // assignment counts as "in flight" if it's
+                            // past PENDING (in_progress / awaiting_review
+                            // / completed / failed) — deleting those would
+                            // erase real work (proof, TOTP counts, notes).
+                            $movable = $scoped->filter(function (Account $a): bool {
                                 $assignment = $a->assignment;
-                                return $assignment === null || $assignment->credentials_revealed_at === null;
+                                return $assignment === null
+                                    || $assignment->status === AccountAssignment::STATUS_PENDING;
                             });
                             $skipped = $records->count() - $movable->count();
 
@@ -614,17 +670,31 @@ class AccountResource extends Resource
                                 return;
                             }
 
-                            DB::transaction(function () use ($movable, $managerId): void {
+                            $actorId = (int) auth()->id();
+
+                            DB::transaction(function () use ($movable, $managerId, $actorId): void {
                                 foreach ($movable as $account) {
                                     $account->update(['manager_id' => $managerId]);
                                     // Assignment (if any) belongs to a
                                     // supervisor under the OLD manager;
                                     // deleting it drops the account back
                                     // to `available` under the new one.
+                                    // Only PENDING assignments reach here
+                                    // (see filter above), so no real work
+                                    // is being erased.
                                     if ($account->assignment !== null) {
                                         $account->assignment->delete();
                                         $account->update(['status' => 'available']);
                                     }
+
+                                    \App\Models\AccountAdminLog::create([
+                                        'tenant_id'            => $account->tenant_id,
+                                        'actor_id'             => $actorId,
+                                        'account_id'           => $account->id,
+                                        'account_email_masked' => self::maskEmail($account->email),
+                                        'action'               => \App\Models\AccountAdminLog::ACTION_REASSIGNED_MANAGER,
+                                        'created_at'           => now(),
+                                    ]);
                                 }
                             });
 

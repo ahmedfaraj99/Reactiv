@@ -298,7 +298,7 @@
                                                  for a missed Reverb frame so the codes appear without a
                                                  manual refresh. Wrapper disappears the moment approval
                                                  lands (the @else stops matching), so polling stops. --}}
-                                            <div wire:poll.4s="$refresh">
+                                            <div wire:poll.4s="checkBackupCodesApproval">
                                                 <div class="rounded-md border border-dashed border-gray-300 bg-gray-50 p-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
                                                     Backup Codes مخفية — اضغط "طلب Backup Codes" أدناه فقط إذا فشل TOTP، وينتظر موافقة المشرف/المدير.
                                                 </div>

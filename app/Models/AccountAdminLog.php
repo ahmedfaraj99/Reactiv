@@ -28,6 +28,7 @@ class AccountAdminLog extends Model
     public const ACTION_ARCHIVED           = 'archived';
     public const ACTION_UNARCHIVED         = 'unarchived';
     public const ACTION_PERMANENTLY_DELETED = 'permanently_deleted';
+    public const ACTION_REASSIGNED_MANAGER = 'reassigned_manager';
 
     public $timestamps = false;
 

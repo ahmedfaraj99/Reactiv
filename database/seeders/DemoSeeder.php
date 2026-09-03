@@ -148,6 +148,17 @@ class DemoSeeder extends Seeder
                     'manager_id'           => $manager->id,
                 ],
             );
+
+            // Re-apply the fields firstOrCreate skips on a hit — new
+            // columns added in later migrations (manager_id, ea_backup_code_*)
+            // stay null on pre-existing demo rows without this. Safe to
+            // rewrite on every run: these are deterministic seed values.
+            $account->update([
+                'ea_backup_code_1' => $seed['backup1'],
+                'ea_backup_code_2' => $seed['backup2'],
+                'manager_id'       => $manager->id,
+            ]);
+
             $created->push($account);
         }
 

@@ -455,6 +455,30 @@ class Activation extends Page
             });
     }
 
+    /**
+     * Lightweight poll target for the pending-approval fallback banner —
+     * fetches only the approval timestamp instead of triggering a full
+     * component refresh (which would re-run mount, re-render the whole
+     * credential display, and re-hit reveal_logs). When the flag flips,
+     * hydrate the codes onto the component so the blade's @if picks
+     * them up on the next render.
+     */
+    public function checkBackupCodesApproval(): void
+    {
+        $approvedAt = AccountAssignment::query()
+            ->whereKey($this->assignment->id)
+            ->value('ea_backup_codes_approved_at');
+
+        if ($approvedAt === null) {
+            return;
+        }
+
+        $this->assignment->refresh();
+        $account = $this->assignment->account;
+        $this->revealedEaBackupCode1 = $account->ea_backup_code_1;
+        $this->revealedEaBackupCode2 = $account->ea_backup_code_2;
+    }
+
     public function hasPendingBackupCodesRequest(): bool
     {
         return Alert::query()
