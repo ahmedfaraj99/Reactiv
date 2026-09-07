@@ -16,7 +16,6 @@ use Filament\Resources\Pages\ListRecords;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class ListUsers extends ListRecords
@@ -27,10 +26,11 @@ class ListUsers extends ListRecords
     {
         $actions = [Actions\CreateAction::make()];
 
-        // Managers get a shortcut to create an employee directly and
-        // pick which supervisor gets them. The employee's office is
-        // derived from the chosen supervisor so the office/scoping
-        // logic elsewhere keeps working unchanged.
+        // Managers get a shortcut to create an employee directly. They
+        // pick the office; every supervisor already covering that office
+        // (users with role Supervisor and matching office_id) sees the
+        // new employee automatically — no explicit supervisor link is
+        // stored on the employee row.
         if (auth()->user()?->isManager()) {
             $actions[] = $this->addEmployeeAction();
         }
@@ -67,41 +67,43 @@ class ListUsers extends ListRecords
                     ->tel()
                     ->maxLength(50),
 
-                Forms\Components\Select::make('supervisor_id')
-                    ->label('المشرف المسؤول')
-                    ->helperText('الموظف ينضم لمكتب هذا المشرف تلقائياً.')
+                Forms\Components\Select::make('office_id')
+                    ->label('المكتب')
+                    ->helperText('كل مشرفي المكتب سيرون هذا الموظف تلقائياً.')
                     ->required()
                     ->searchable()
                     ->options(function (): array {
                         $u = auth()->user();
                         $officeIds = $u?->managedOffices()->pluck('id')->all() ?? [];
 
-                        return User::query()
-                            ->whereIn('office_id', $officeIds)
-                            ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Supervisor->value))
+                        return \App\Models\Office::query()
+                            ->whereIn('id', $officeIds)
                             ->orderBy('name')
-                            ->get()
-                            ->mapWithKeys(fn (User $s) => [
-                                $s->id => $s->name.' ('.($s->office?->name ?? '—').')',
-                            ])
+                            ->get(['id', 'name'])
+                            ->mapWithKeys(function (\App\Models\Office $office): array {
+                                $supervisorCount = User::query()
+                                    ->where('office_id', $office->id)
+                                    ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Supervisor->value))
+                                    ->count();
+
+                                $label = $office->name;
+                                $label .= $supervisorCount > 0
+                                    ? " ({$supervisorCount} مشرف)"
+                                    : ' (بلا مشرف)';
+
+                                return [$office->id => $label];
+                            })
                             ->all();
                     })
                     ->rule(function () {
-                        // Same anti-tampering guard as the base UserResource
-                        // form uses on office_id: the supervisor id must
-                        // resolve to a supervisor actually inside one of
-                        // this manager's offices, no matter what the
-                        // client submits.
+                        // Anti-tampering guard: the submitted office_id
+                        // must be one of this manager's own offices, no
+                        // matter what the client sends.
                         return function (string $attribute, $value, \Closure $fail): void {
                             $u = auth()->user();
                             $officeIds = $u?->managedOffices()->pluck('id')->all() ?? [];
-                            $ok = User::query()
-                                ->where('id', $value)
-                                ->whereIn('office_id', $officeIds)
-                                ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Supervisor->value))
-                                ->exists();
-                            if (! $ok) {
-                                $fail('المشرف المختار خارج نطاق صلاحيتك.');
+                            if (! in_array((int) $value, $officeIds, true)) {
+                                $fail('المكتب المختار خارج نطاق صلاحيتك.');
                             }
                         };
                     }),
@@ -123,11 +125,9 @@ class ListUsers extends ListRecords
                     ]);
                 }
 
-                $supervisor = User::findOrFail($data['supervisor_id']);
-
                 $employee = User::create([
                     'tenant_id'         => $tenant->id,
-                    'office_id'         => $supervisor->office_id,
+                    'office_id'         => (int) $data['office_id'],
                     'name'              => $data['name'],
                     'email'             => $data['email'],
                     'phone'             => $data['phone'] ?? null,

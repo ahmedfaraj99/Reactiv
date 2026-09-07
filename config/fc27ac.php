@@ -48,6 +48,6 @@ return [
     // waiting screen until re-approved.
     'session_approval' => [
         'enabled'         => (bool) env('FC27AC_SESSION_APPROVAL', true),
-        'duration_hours'  => (int)  env('FC27AC_SESSION_APPROVAL_HOURS', 4),
+        'duration_hours'  => (int)  env('FC27AC_SESSION_APPROVAL_HOURS', 24),
     ],
 ];

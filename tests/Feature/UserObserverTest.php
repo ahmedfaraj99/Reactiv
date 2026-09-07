@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Enums\AlertType;
 use App\Enums\UserRole;
 use App\Models\AccountAssignment;
+use App\Models\Alert;
 use Tests\TestCase;
 
 /**
@@ -124,5 +126,75 @@ class UserObserverTest extends TestCase
 
         $this->assertSame('available', $account->fresh()->status);
         $this->assertSame(0, AccountAssignment::where('account_id', $account->id)->count());
+    }
+
+    public function test_deleting_the_only_supervisor_on_an_office_raises_orphan_alert(): void
+    {
+        $tenant = $this->makeTenant();
+        $office = $this->makeOffice($tenant, ['name' => 'مكتب أ']);
+
+        $supervisor = $this->makeUser($tenant, UserRole::Supervisor, $office);
+        $this->makeUser($tenant, UserRole::Employee, $office);
+        $this->makeUser($tenant, UserRole::Employee, $office);
+
+        $supervisor->delete();
+
+        $alert = Alert::where('tenant_id', $tenant->id)
+            ->where('type', AlertType::SupervisorDeleted)
+            ->firstOrFail();
+
+        $this->assertSame('high', $alert->severity->value);
+        $this->assertSame(2, $alert->payload['employee_count']);
+        $this->assertSame($office->id, $alert->payload['office_id']);
+    }
+
+    public function test_deleting_a_supervisor_when_another_still_covers_the_office_does_not_alert(): void
+    {
+        $tenant = $this->makeTenant();
+        $office = $this->makeOffice($tenant);
+
+        $supervisorA = $this->makeUser($tenant, UserRole::Supervisor, $office);
+        $this->makeUser($tenant, UserRole::Supervisor, $office); // co-supervisor
+        $this->makeUser($tenant, UserRole::Employee, $office);
+
+        $supervisorA->delete();
+
+        $this->assertSame(
+            0,
+            Alert::where('tenant_id', $tenant->id)
+                ->where('type', AlertType::SupervisorDeleted)
+                ->count(),
+        );
+    }
+
+    public function test_deleting_a_supervisor_with_no_office_does_not_raise_the_alert(): void
+    {
+        $tenant = $this->makeTenant();
+        $supervisor = $this->makeUser($tenant, UserRole::Supervisor, null);
+
+        $supervisor->delete();
+
+        $this->assertSame(
+            0,
+            Alert::where('tenant_id', $tenant->id)
+                ->where('type', AlertType::SupervisorDeleted)
+                ->count(),
+        );
+    }
+
+    public function test_deleting_an_employee_does_not_raise_the_supervisor_alert(): void
+    {
+        $tenant = $this->makeTenant();
+        $office = $this->makeOffice($tenant);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $office);
+
+        $employee->delete();
+
+        $this->assertSame(
+            0,
+            Alert::where('tenant_id', $tenant->id)
+                ->where('type', AlertType::SupervisorDeleted)
+                ->count(),
+        );
     }
 }

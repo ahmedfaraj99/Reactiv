@@ -6,8 +6,10 @@ namespace App\Observers;
 
 use App\Models\AccountAssignment;
 use App\Models\Alert;
+use App\Models\Office;
 use App\Models\User;
 use App\Enums\AlertType;
+use App\Enums\UserRole;
 
 /**
  * An employee being deleted or deactivated shouldn't leave their
@@ -27,6 +29,7 @@ class UserObserver
     public function deleting(User $user): void
     {
         $this->releaseInFlightAccounts($user);
+        $this->flagOrphanedOfficesIfSupervisor($user);
     }
 
     public function updated(User $user): void
@@ -81,5 +84,61 @@ class UserObserver
                 ],
             ]);
         }
+    }
+
+    /**
+     * A supervisor covers a single office via users.office_id. Since
+     * multiple supervisors can share the same office_id (for coverage),
+     * only fire the "orphaned office" alert when the office would be
+     * left with NO active supervisor after this deletion. A second
+     * supervisor still on the office means the manager has nothing
+     * urgent to reassign.
+     */
+    private function flagOrphanedOfficesIfSupervisor(User $user): void
+    {
+        if (! $user->isSupervisor() || $user->office_id === null) {
+            return;
+        }
+
+        $officeId = $user->office_id;
+
+        $remainingSupervisors = User::query()
+            ->where('tenant_id', $user->tenant_id)
+            ->where('office_id', $officeId)
+            ->where('id', '!=', $user->id)
+            ->where('active', true)
+            ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Supervisor->value))
+            ->count();
+
+        if ($remainingSupervisors > 0) {
+            return;
+        }
+
+        $office = Office::find($officeId);
+        if ($office === null) {
+            return;
+        }
+
+        $employeeCount = User::query()
+            ->where('tenant_id', $user->tenant_id)
+            ->where('office_id', $officeId)
+            ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Employee->value))
+            ->count();
+
+        $supervisorName = $user->name;
+
+        Alert::create([
+            'tenant_id' => $user->tenant_id,
+            'user_id'   => $user->id,
+            'type'      => AlertType::SupervisorDeleted,
+            'severity'  => 'high',
+            'message'   => "حُذف المشرف {$supervisorName} — المكتب ({$office->name}) بلا مشرف، {$employeeCount} موظف يحتاجون تغطية",
+            'payload'   => [
+                'supervisor_name' => $supervisorName,
+                'office_id'       => $officeId,
+                'office_name'     => $office->name,
+                'employee_count'  => $employeeCount,
+            ],
+        ]);
     }
 }

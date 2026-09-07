@@ -30,7 +30,7 @@ class AccountAssignment extends Model
 
     /** Base 2FA-code pulls allowed before a supervisor must approve more. */
     public const PSN_TOTP_BASE_LIMIT = 1;
-    public const EA_TOTP_BASE_LIMIT  = 2;
+    public const EA_TOTP_BASE_LIMIT  = 1;
 
     protected $fillable = [
         'tenant_id', 'account_id', 'employee_id', 'supervisor_id',

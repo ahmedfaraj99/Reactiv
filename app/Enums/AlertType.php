@@ -18,6 +18,7 @@ enum AlertType: string
     case DuplicateProof      = 'duplicate_proof';
     case SuspiciousSpeed     = 'suspicious_speed';
     case EmergencyFreeze     = 'emergency_freeze';
+    case SupervisorDeleted   = 'supervisor_deleted';
 
     public function label(): string
     {
@@ -34,6 +35,7 @@ enum AlertType: string
             self::DuplicateProof      => 'صورة إثبات مكررة',
             self::SuspiciousSpeed     => 'تفعيل بسرعة غير طبيعية',
             self::EmergencyFreeze     => 'تجميد/فك تجميد الطوارئ',
+            self::SupervisorDeleted   => 'حذف مشرف — مكاتب/موظفون بلا مشرف',
         };
     }
 

@@ -10,7 +10,7 @@ use App\Models\AccountAssignment;
 use Tests\TestCase;
 
 /**
- * PSN allows 1 code pull, EA allows 2, before a supervisor has to
+ * PSN and EA each allow 1 code pull before a supervisor has to
  * approve more. This covers the base allowance math in
  * AccountAssignment and the atomic check-then-increment pattern used
  * by Activation's generate*TotpAction() closures (tested here at the
@@ -35,7 +35,7 @@ class TotpLimitTest extends TestCase
         $this->assertFalse($assignment->canGeneratePsnTotp());
     }
 
-    public function test_ea_allows_exactly_two_generations_before_requiring_approval(): void
+    public function test_ea_allows_exactly_one_generation_before_requiring_approval(): void
     {
         $tenant = $this->makeTenant();
         $office = $this->makeOffice($tenant);
@@ -44,12 +44,10 @@ class TotpLimitTest extends TestCase
         $assignment = $this->makeAssignment($tenant, $account, $employee);
 
         $this->assertTrue($assignment->canGenerateEaTotp());
-        $assignment->increment('ea_totp_generations');
-        $assignment->refresh();
-        $this->assertTrue($assignment->canGenerateEaTotp());
 
         $assignment->increment('ea_totp_generations');
         $assignment->refresh();
+
         $this->assertFalse($assignment->canGenerateEaTotp());
     }
 
