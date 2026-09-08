@@ -181,9 +181,16 @@ class OfficeBroadcastResource extends Resource
                 Tables\Filters\Filter::make('active')
                     ->label('النشط فقط')
                     ->default()
-                    ->query(fn (Builder $q): Builder => $q->where(function (Builder $inner): void {
-                        $inner->whereNull('expires_at')->orWhere('expires_at', '>', now());
-                    })),
+                    ->query(function (Builder $q): Builder {
+                        // Filament sometimes hands the filter closure a Builder
+                        // without model binding; Eloquent Builder::where(Closure)
+                        // then explodes on `$this->model->newQueryWithoutRelationships()`.
+                        // Nest on the underlying QueryBuilder, which needs no model.
+                        $q->getQuery()->where(function ($inner): void {
+                            $inner->whereNull('expires_at')->orWhere('expires_at', '>', now());
+                        });
+                        return $q;
+                    }),
             ])
             ->actions([
                 Tables\Actions\Action::make('end')
