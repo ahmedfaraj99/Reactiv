@@ -120,6 +120,23 @@ class AssignmentReviewResource extends Resource
                     ->label('الموظف')
                     ->searchable(),
 
+                // What the reviewer must actually verify in the screenshot.
+                // "تفعيل فقط" = login proof is enough. "N مباريات" = the
+                // shot must show the match-rewards screen after that many
+                // games. Without this column the reviewer has no way to
+                // know what to check the image against.
+                Tables\Columns\TextColumn::make('account.matches_required')
+                    ->label('المطلوب')
+                    ->badge()
+                    ->color(fn (?int $state): string => ($state ?? 0) > 0 ? 'warning' : 'gray')
+                    ->icon(fn (?int $state): string => ($state ?? 0) > 0
+                        ? 'heroicon-o-trophy'
+                        : 'heroicon-o-check-badge')
+                    ->formatStateUsing(fn (?int $state): string => ($state ?? 0) > 0
+                        ? $state.' مباريات'
+                        : 'تفعيل فقط')
+                    ->sortable(),
+
                 Tables\Columns\TextColumn::make('status')
                     ->label('الحالة')
                     ->badge()
