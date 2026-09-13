@@ -53,11 +53,13 @@ class SessionApprovals extends Page implements HasTable
         $u = auth()->user();
         $q = SessionRequest::query()->where('tenant_id', $u->tenant_id);
 
-        // Supervisor sees only their office. Manager/owner see the
-        // whole tenant. If we ever add "team leads" scoped narrower
-        // than a supervisor, add the branch here.
+        // Owner sees the whole tenant. Manager is limited to offices
+        // they manage (matches User::visibleEmployeeIds()). Supervisor
+        // sees only their single office.
         if ($u->isSupervisor()) {
             $q->where('office_id', $u->office_id);
+        } elseif ($u->isManager()) {
+            $q->whereIn('office_id', $u->managedOffices()->pluck('id'));
         }
 
         return $q;
@@ -65,8 +67,9 @@ class SessionApprovals extends Page implements HasTable
 
     /**
      * Refresh the approvals table on any session-request state change
-     * broadcast to this scope. Managers/owner subscribe to the tenant
-     * channel; supervisors to their office channel. Livewire's
+     * broadcast to this scope. Owner subscribes to the tenant channel;
+     * a manager subscribes to the office channel of each office they
+     * manage; a supervisor to their single office channel. Livewire's
      * `$refresh` on echo events rebuilds the table without a poll.
      *
      * @return array<string, string>
@@ -77,8 +80,14 @@ class SessionApprovals extends Page implements HasTable
         $u = auth()->user();
         $listeners = [];
 
-        if ($u->isTenantOwner() || $u->isManager()) {
+        if ($u->isTenantOwner()) {
             $listeners['echo-private:tenant.'.$u->tenant_id.'.approvals,.session-request.changed'] = '$refresh';
+        }
+
+        if ($u->isManager()) {
+            foreach ($u->managedOffices()->pluck('id') as $officeId) {
+                $listeners['echo-private:office.'.$officeId.'.approvals,.session-request.changed'] = '$refresh';
+            }
         }
 
         if ($u->isSupervisor() && $u->office_id !== null) {
@@ -199,6 +208,14 @@ class SessionApprovals extends Page implements HasTable
     {
         $hours = (int) config('fc27ac.session_approval.duration_hours', 4);
 
+        /** @var \App\Models\User $u */
+        $u = auth()->user();
+
+        // Capture affected office ids BEFORE the update so we can fan out
+        // one broadcast per office — the manager may span several offices
+        // and each has its own approvals channel.
+        $officeIds = $this->scopedQuery()->pending()->distinct()->pluck('office_id');
+
         $count = $this->scopedQuery()
             ->pending()
             ->update([
@@ -208,17 +225,12 @@ class SessionApprovals extends Page implements HasTable
                 'expires_at' => now()->addHours($hours),
             ]);
 
-        // Fan-out on the tenant channel only — every subscriber (managers
-        // and the owner) refreshes. Supervisors do not receive tenant-wide
-        // events since bulk-approve fires from their own scope which is
-        // already covered by them being on the office channel too; sending
-        // a per-office event too would cause them to double-refresh.
-        /** @var \App\Models\User $u */
-        $u = auth()->user();
-        \App\Events\SessionRequestChanged::dispatch(
-            (int) $u->tenant_id,
-            (int) ($u->office_id ?? 0),
-        );
+        foreach ($officeIds as $officeId) {
+            \App\Events\SessionRequestChanged::dispatch(
+                (int) $u->tenant_id,
+                (int) $officeId,
+            );
+        }
 
         Notification::make()
             ->success()
@@ -277,8 +289,14 @@ class SessionApprovals extends Page implements HasTable
         /** @var User $u */
         $u = auth()->user();
         abort_unless($r->tenant_id === $u->tenant_id, 403);
+
         if ($u->isSupervisor()) {
             abort_unless($r->office_id === $u->office_id, 403);
+        } elseif ($u->isManager()) {
+            abort_unless(
+                $u->managedOffices()->whereKey($r->office_id)->exists(),
+                403,
+            );
         }
     }
 }

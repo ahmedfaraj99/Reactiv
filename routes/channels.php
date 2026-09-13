@@ -17,15 +17,22 @@ Broadcast::channel('tenant.{tenantId}', function (User $user, int $tenantId): bo
     return $user->tenant_id === $tenantId;
 });
 
-// Approvals scope: managers/owners see everything in the tenant,
-// supervisors see only their office. Two channels — the client
-// subscribes to the one matching its role — is simpler than a single
-// channel with client-side filtering (which would also broadcast noise
-// to supervisors from other offices).
+// Approvals scope. Tenant-wide channel is owner-only — the owner is the
+// only role whose approvals view spans every office. Managers are scoped
+// to the offices they manage, so they subscribe per-office alongside the
+// office's supervisor (who is scoped by office_id).
 Broadcast::channel('tenant.{tenantId}.approvals', function (User $user, int $tenantId): bool {
-    return $user->tenant_id === $tenantId && ($user->isTenantOwner() || $user->isManager());
+    return $user->tenant_id === $tenantId && $user->isTenantOwner();
 });
 
 Broadcast::channel('office.{officeId}.approvals', function (User $user, int $officeId): bool {
-    return $user->office_id === $officeId && $user->isSupervisor();
+    if ($user->isSupervisor() && $user->office_id === $officeId) {
+        return true;
+    }
+
+    if ($user->isManager()) {
+        return $user->managedOffices()->whereKey($officeId)->exists();
+    }
+
+    return false;
 });

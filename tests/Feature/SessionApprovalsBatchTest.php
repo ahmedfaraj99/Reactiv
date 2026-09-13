@@ -75,6 +75,57 @@ class SessionApprovalsBatchTest extends TestCase
         $this->assertNotNull($r1->fresh()->expires_at);
     }
 
+    public function test_manager_bulk_approve_never_leaks_across_unmanaged_offices(): void
+    {
+        $tenant = $this->makeTenant();
+        $officeA = $this->makeOffice($tenant, ['name' => 'A']);
+        $officeB = $this->makeOffice($tenant, ['name' => 'B']);
+        $managerA = $this->makeUser($tenant, UserRole::Manager, $officeA);
+        $officeA->update(['manager_id' => $managerA->id]);
+        // officeB has its own manager (or none) — either way, managerA
+        // does not manage it and must not see or touch its requests.
+        $empInA = $this->makeUser($tenant, UserRole::Employee, $officeA);
+        $empInB = $this->makeUser($tenant, UserRole::Employee, $officeB);
+
+        $inScope  = $this->pendingRequestFor($tenant->id, $empInA->id, $officeA->id);
+        $outScope = $this->pendingRequestFor($tenant->id, $empInB->id, $officeB->id);
+
+        $this->actingAsTenantUser($managerA);
+
+        Livewire::test(SessionApprovals::class)->callTableAction('approveAllPending');
+
+        $this->assertSame(SessionRequest::STATUS_APPROVED, $inScope->fresh()->status);
+        $this->assertSame(SessionRequest::STATUS_PENDING, $outScope->fresh()->status);
+    }
+
+    public function test_manager_cannot_see_or_decide_on_another_managers_office(): void
+    {
+        $tenant = $this->makeTenant();
+        $officeA = $this->makeOffice($tenant, ['name' => 'A']);
+        $officeB = $this->makeOffice($tenant, ['name' => 'B']);
+        $managerA = $this->makeUser($tenant, UserRole::Manager, $officeA);
+        $managerB = $this->makeUser($tenant, UserRole::Manager, $officeB);
+        $officeA->update(['manager_id' => $managerA->id]);
+        $officeB->update(['manager_id' => $managerB->id]);
+        $empInB = $this->makeUser($tenant, UserRole::Employee, $officeB);
+
+        $foreignRequest = $this->pendingRequestFor($tenant->id, $empInB->id, $officeB->id);
+
+        $this->actingAsTenantUser($managerA);
+
+        // The row from officeB must not appear in managerA's table.
+        Livewire::test(SessionApprovals::class)
+            ->assertCanNotSeeTableRecords([$foreignRequest]);
+
+        // And even if a forged row id reaches the action handler, the
+        // record must remain pending — the scoped query would not resolve
+        // it, and assertCanDecide would 403 if the model somehow did.
+        Livewire::test(SessionApprovals::class)
+            ->callTableAction('approve', $foreignRequest);
+
+        $this->assertSame(SessionRequest::STATUS_PENDING, $foreignRequest->fresh()->status);
+    }
+
     public function test_supervisor_bulk_approve_never_leaks_across_offices(): void
     {
         $tenant = $this->makeTenant();
