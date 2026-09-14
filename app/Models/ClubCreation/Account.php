@@ -32,8 +32,9 @@ class Account extends Model
     protected $table = 'club_creation_accounts';
 
     protected $fillable = [
-        'tenant_id', 'email', 'password', 'status', 'batch_id',
-        'done_at', 'exported_at',
+        'tenant_id', 'email', 'password',
+        'ea_backup_code', 'psn_backup_code',
+        'status', 'batch_id', 'done_at', 'exported_at',
     ];
 
     protected function casts(): array

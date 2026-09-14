@@ -71,6 +71,16 @@ class AccountResource extends Resource
                 ->label('كلمة المرور')
                 ->required()
                 ->maxLength(255),
+
+            Forms\Components\TextInput::make('ea_backup_code')
+                ->label('EA Backup Code')
+                ->required()
+                ->maxLength(64),
+
+            Forms\Components\TextInput::make('psn_backup_code')
+                ->label('PSN Backup Code')
+                ->required()
+                ->maxLength(64),
         ]);
     }
 
@@ -88,6 +98,18 @@ class AccountResource extends Resource
 
                 Tables\Columns\TextColumn::make('password')
                     ->label('كلمة المرور')
+                    ->copyable()
+                    ->fontFamily('mono')
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                Tables\Columns\TextColumn::make('ea_backup_code')
+                    ->label('EA Backup')
+                    ->copyable()
+                    ->fontFamily('mono')
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                Tables\Columns\TextColumn::make('psn_backup_code')
+                    ->label('PSN Backup')
                     ->copyable()
                     ->fontFamily('mono')
                     ->toggleable(isToggledHiddenByDefault: true),
@@ -155,8 +177,8 @@ class AccountResource extends Resource
                             ->content(new \Illuminate\Support\HtmlString(
                                 '<div class="text-sm space-y-1 leading-6">'
                                 . '<div>• الملف يجب أن يكون Excel (.xlsx) أو CSV (.csv).</div>'
-                                . '<div>• الصف الأول: عناوين الأعمدة <b>email</b> و <b>password</b> بالترتيب.</div>'
-                                . '<div>• كل صف بعد ذلك = حساب واحد.</div>'
+                                . '<div>• الأعمدة بالترتيب: <b>email</b>, <b>password</b>, <b>ea_backup_code</b>, <b>psn_backup_code</b>.</div>'
+                                . '<div>• الصف الأول للعناوين، وكل صف بعده = حساب واحد.</div>'
                                 . '<div>• حمّل النموذج الفارغ أعلاه لتعرف الترتيب الصحيح.</div>'
                                 . '</div>'
                             )),
@@ -234,7 +256,7 @@ class AccountResource extends Resource
     }
 
     /**
-     * @param  iterable<array{0:string,1:string}> $rows
+     * @param  iterable<array{0:string,1:string,2:string,3:string}> $rows
      * @return array{added:int,duplicates:int,skipped:int}
      */
     protected static function importRows(iterable $rows, int $tenantId): array
@@ -248,8 +270,11 @@ class AccountResource extends Resource
             foreach ($rows as $row) {
                 $email = trim((string) ($row[0] ?? ''));
                 $password = trim((string) ($row[1] ?? ''));
+                $eaCode = trim((string) ($row[2] ?? ''));
+                $psnCode = trim((string) ($row[3] ?? ''));
 
-                if ($email === '' || $password === '' || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                if ($email === '' || $password === '' || $eaCode === '' || $psnCode === ''
+                    || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
                     $skipped++;
                     continue;
                 }
@@ -264,10 +289,12 @@ class AccountResource extends Resource
                 }
 
                 Account::create([
-                    'tenant_id' => $tenantId,
-                    'email'     => $email,
-                    'password'  => $password,
-                    'status'    => Account::STATUS_AVAILABLE,
+                    'tenant_id'       => $tenantId,
+                    'email'           => $email,
+                    'password'        => $password,
+                    'ea_backup_code'  => $eaCode,
+                    'psn_backup_code' => $psnCode,
+                    'status'          => Account::STATUS_AVAILABLE,
                 ]);
 
                 $seenInBatch[$email] = true;
@@ -279,7 +306,7 @@ class AccountResource extends Resource
     }
 
     /**
-     * @return list<array{0:string,1:string}>
+     * @return list<array{0:string,1:string,2:string,3:string}>
      */
     protected static function readXlsx(string $path): array
     {
@@ -294,7 +321,6 @@ class AccountResource extends Resource
 
                 if ($isFirst) {
                     $isFirst = false;
-                    // Skip if the first row looks like a header.
                     $first = strtolower(trim($cells[0] ?? ''));
                     if ($first === 'email' || $first === 'e-mail' || $first === 'البريد') {
                         continue;
@@ -305,7 +331,12 @@ class AccountResource extends Resource
                     continue;
                 }
 
-                $rows[] = [$cells[0] ?? '', $cells[1] ?? ''];
+                $rows[] = [
+                    $cells[0] ?? '',
+                    $cells[1] ?? '',
+                    $cells[2] ?? '',
+                    $cells[3] ?? '',
+                ];
             }
 
             break;
@@ -317,7 +348,7 @@ class AccountResource extends Resource
     }
 
     /**
-     * @return list<array{0:string,1:string}>
+     * @return list<array{0:string,1:string,2:string,3:string}>
      */
     protected static function readCsv(string $path): array
     {
@@ -341,7 +372,12 @@ class AccountResource extends Resource
                 continue;
             }
 
-            $rows[] = [$cells[0] ?? '', $cells[1] ?? ''];
+            $rows[] = [
+                $cells[0] ?? '',
+                $cells[1] ?? '',
+                $cells[2] ?? '',
+                $cells[3] ?? '',
+            ];
         }
 
         fclose($handle);
@@ -364,11 +400,17 @@ class AccountResource extends Resource
                 ->setBackgroundColor(Color::rgb(79, 70, 229))
                 ->setFontColor(Color::WHITE);
 
-            $writer->addRow(Row::fromValues(['email', 'password'], $headerStyle));
+            $writer->addRow(Row::fromValues(
+                ['email', 'password', 'ea_backup_code', 'psn_backup_code'],
+                $headerStyle
+            ));
 
-            // A couple of illustrative rows to show the shape.
-            $writer->addRow(Row::fromValues(['example1@ea.com', 'Pass!Example123']));
-            $writer->addRow(Row::fromValues(['example2@ea.com', 'AnotherPass!456']));
+            $writer->addRow(Row::fromValues([
+                'example1@ea.com', 'Pass!Example123', 'EA-8H4K-9P2M', 'PSN-Q7R2-N5X1',
+            ]));
+            $writer->addRow(Row::fromValues([
+                'example2@ea.com', 'AnotherPass!456', 'EA-2F8V-6C3D', 'PSN-J4K9-B2M5',
+            ]));
 
             $writer->close();
         }, 200, [

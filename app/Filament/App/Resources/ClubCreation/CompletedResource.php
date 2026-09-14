@@ -221,7 +221,8 @@ class CompletedResource extends Resource
             $writer->openToFile('php://output');
 
             $writer->addRow(Row::fromValues([
-                'Email', 'Password', 'Recipient', 'Batch #', 'Done At', 'Exported At',
+                'Email', 'Password', 'EA Backup Code', 'PSN Backup Code',
+                'Recipient', 'Batch #', 'Done At', 'Exported At',
             ]));
 
             $writtenIds = [];
@@ -244,6 +245,8 @@ class CompletedResource extends Resource
                     $writer->addRow(Row::fromValues([
                         $account->email,
                         $account->password,
+                        $account->ea_backup_code,
+                        $account->psn_backup_code,
                         $account->batch?->recipient ?? '',
                         $account->batch_id,
                         optional($account->done_at)->format('Y-m-d H:i'),

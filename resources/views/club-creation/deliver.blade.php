@@ -175,6 +175,22 @@
                 </div>
             </div>
 
+            <div class="field">
+                <label>EA Backup Code</label>
+                <div class="field-value">
+                    <input type="text" value="{{ $account->ea_backup_code }}" readonly>
+                    <button type="button" onclick="copyValue(this)">نسخ</button>
+                </div>
+            </div>
+
+            <div class="field">
+                <label>PSN Backup Code</label>
+                <div class="field-value">
+                    <input type="text" value="{{ $account->psn_backup_code }}" readonly>
+                    <button type="button" onclick="copyValue(this)">نسخ</button>
+                </div>
+            </div>
+
             <button type="button"
                     class="done-btn"
                     data-account-id="{{ $account->id }}"
