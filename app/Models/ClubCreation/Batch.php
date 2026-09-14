@@ -31,6 +31,8 @@ class Batch extends Model
     protected $fillable = [
         'tenant_id', 'token', 'recipient', 'account_count',
         'price_per_account', 'notes', 'opened_at',
+        'first_open_ip', 'first_open_ua',
+        'revoked_at', 'expires_at',
     ];
 
     protected function casts(): array
@@ -39,7 +41,24 @@ class Batch extends Model
             'account_count'     => 'integer',
             'price_per_account' => 'decimal:2',
             'opened_at'         => 'datetime',
+            'revoked_at'        => 'datetime',
+            'expires_at'        => 'datetime',
         ];
+    }
+
+    public function isRevoked(): bool
+    {
+        return $this->revoked_at !== null;
+    }
+
+    public function isExpired(): bool
+    {
+        return $this->expires_at !== null && $this->expires_at->isPast();
+    }
+
+    public function isLive(): bool
+    {
+        return ! $this->isRevoked() && ! $this->isExpired();
     }
 
     protected static function booted(): void

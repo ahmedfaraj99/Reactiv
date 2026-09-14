@@ -252,6 +252,16 @@ class AccountResource extends Resource
                     Tables\Actions\DeleteBulkAction::make()->label('حذف المحدد'),
                 ]),
             ])
+            ->emptyStateIcon('heroicon-o-rectangle-stack')
+            ->emptyStateHeading('لا يوجد حسابات بعد')
+            ->emptyStateDescription('ابدأ برفع دفعة من ملف Excel أو CSV. حمّل النموذج لتعرف ترتيب الأعمدة.')
+            ->emptyStateActions([
+                Tables\Actions\Action::make('emptyDownloadTemplate')
+                    ->label('تحميل النموذج')
+                    ->icon('heroicon-o-document-arrow-down')
+                    ->color('gray')
+                    ->action(fn () => self::streamTemplate()),
+            ])
             ->defaultSort('created_at', 'desc');
     }
 

@@ -129,7 +129,49 @@ class BatchResource extends Resource
                 Tables\Columns\IconColumn::make('opened_at')
                     ->label('فُتح؟')
                     ->boolean()
-                    ->getStateUsing(fn (Batch $r): bool => $r->opened_at !== null),
+                    ->getStateUsing(fn (Batch $r): bool => $r->opened_at !== null)
+                    ->tooltip(fn (Batch $r): ?string => $r->opened_at
+                        ? 'أول فتح: ' . $r->opened_at->format('Y-m-d H:i') . ($r->first_open_ip ? ' — IP: ' . $r->first_open_ip : '')
+                        : null),
+
+                Tables\Columns\TextColumn::make('first_open_ip')
+                    ->label('IP أول فتح')
+                    ->placeholder('—')
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                Tables\Columns\TextColumn::make('first_open_ua')
+                    ->label('المتصفح/الجهاز')
+                    ->placeholder('—')
+                    ->limit(50)
+                    ->tooltip(fn (Batch $r): ?string => $r->first_open_ua)
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                Tables\Columns\TextColumn::make('link_state')
+                    ->label('الرابط')
+                    ->state(function (Batch $r): string {
+                        if ($r->isRevoked()) {
+                            return 'مُبطَل';
+                        }
+                        if ($r->isExpired()) {
+                            return 'منتهي';
+                        }
+                        if ($r->expires_at !== null) {
+                            return 'ينتهي ' . $r->expires_at->diffForHumans();
+                        }
+
+                        return 'نشط';
+                    })
+                    ->badge()
+                    ->color(function (Batch $r): string {
+                        if ($r->isRevoked() || $r->isExpired()) {
+                            return 'danger';
+                        }
+                        if ($r->expires_at !== null) {
+                            return 'warning';
+                        }
+
+                        return 'success';
+                    }),
 
                 Tables\Columns\TextColumn::make('created_at')
                     ->label('التاريخ')
@@ -187,6 +229,19 @@ class BatchResource extends Resource
                             ->minValue(0)
                             ->default(0),
 
+                        Forms\Components\Select::make('expires_in_days')
+                            ->label('انتهاء الصلاحية')
+                            ->options([
+                                ''   => 'دائم (بلا انتهاء)',
+                                '1'  => 'يوم واحد',
+                                '3'  => '3 أيام',
+                                '7'  => 'أسبوع',
+                                '30' => 'شهر',
+                            ])
+                            ->default('')
+                            ->native(false)
+                            ->helperText('اختياري — بعد انتهاء المدة الرابط يعود 404.'),
+
                         Forms\Components\Textarea::make('notes')
                             ->label('ملاحظات (اختياري)')
                             ->rows(2),
@@ -214,12 +269,19 @@ class BatchResource extends Resource
                                 return null;
                             }
 
+                            $expiresAt = null;
+                            $days = (int) ($data['expires_in_days'] ?? 0);
+                            if ($days > 0) {
+                                $expiresAt = now()->addDays($days);
+                            }
+
                             $batch = Batch::create([
                                 'tenant_id'         => $tenantId,
                                 'recipient'         => $data['recipient'],
                                 'account_count'     => $count,
                                 'price_per_account' => $data['price_per_account'],
                                 'notes'             => $data['notes'] ?? null,
+                                'expires_at'        => $expiresAt,
                             ]);
 
                             Account::whereIn('id', $accounts->pluck('id'))->update([
@@ -279,9 +341,9 @@ class BatchResource extends Resource
                         JS);
 
                         Notification::make()
-                            ->title('تم نسخ الرابط')
-                            ->body($url)
+                            ->title('نُسخ ✓')
                             ->success()
+                            ->duration(2000)
                             ->send();
                     }),
 
@@ -292,6 +354,48 @@ class BatchResource extends Resource
                     ->modalContent(fn (Batch $r) => view('filament.club-creation.batch-accounts', ['batch' => $r]))
                     ->modalSubmitAction(false)
                     ->modalCancelActionLabel('إغلاق'),
+
+                Tables\Actions\Action::make('revoke')
+                    ->label(fn (Batch $r): string => $r->isRevoked() ? 'إلغاء الإبطال' : 'إبطال الرابط')
+                    ->icon(fn (Batch $r): string => $r->isRevoked() ? 'heroicon-o-arrow-path' : 'heroicon-o-no-symbol')
+                    ->color(fn (Batch $r): string => $r->isRevoked() ? 'success' : 'danger')
+                    ->requiresConfirmation()
+                    ->modalDescription(fn (Batch $r): string => $r->isRevoked()
+                        ? 'سيعود الرابط للعمل، والزبون يستطيع فتحه مجدداً.'
+                        : 'الرابط سيتوقّف عن العمل فوراً. الدفعة تبقى في السجل. يمكن التراجع لاحقاً.')
+                    ->action(function (Batch $record): void {
+                        $record->update([
+                            'revoked_at' => $record->isRevoked() ? null : now(),
+                        ]);
+
+                        Notification::make()
+                            ->title($record->isRevoked() ? 'تم إبطال الرابط' : 'تم إلغاء الإبطال')
+                            ->success()
+                            ->send();
+                    }),
+
+                Tables\Actions\Action::make('regenerateToken')
+                    ->label('إعادة توليد الرابط')
+                    ->icon('heroicon-o-arrow-path')
+                    ->color('warning')
+                    ->requiresConfirmation()
+                    ->modalHeading('إعادة توليد رابط جديد')
+                    ->modalDescription('الرابط القديم سيتوقّف نهائياً وسيُنشأ رابط جديد لنفس الحسابات. استعمل هذا لو أرسلت الرابط للشخص الخطأ.')
+                    ->modalSubmitActionLabel('توليد رابط جديد')
+                    ->action(function (Batch $record): void {
+                        $record->update([
+                            'token'      => Batch::freshToken(),
+                            'opened_at'  => null,
+                            'revoked_at' => null,
+                        ]);
+
+                        Notification::make()
+                            ->title('تم توليد رابط جديد')
+                            ->body($record->fresh()->publicUrl())
+                            ->success()
+                            ->persistent()
+                            ->send();
+                    }),
 
                 Tables\Actions\DeleteAction::make()
                     ->label('حذف')
