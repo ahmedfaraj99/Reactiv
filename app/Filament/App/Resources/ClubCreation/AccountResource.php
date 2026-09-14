@@ -16,6 +16,13 @@ use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use OpenSpout\Common\Entity\Row;
+use OpenSpout\Common\Entity\Style\Color;
+use OpenSpout\Common\Entity\Style\Style;
+use OpenSpout\Reader\XLSX\Reader as XlsxReader;
+use OpenSpout\Writer\XLSX\Writer as XlsxWriter;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AccountResource extends Resource
 {
@@ -131,16 +138,41 @@ class AccountResource extends Resource
                     ]),
             ])
             ->headerActions([
+                Tables\Actions\Action::make('downloadTemplate')
+                    ->label('تحميل النموذج')
+                    ->icon('heroicon-o-document-arrow-down')
+                    ->color('gray')
+                    ->action(fn () => self::streamTemplate()),
+
                 Tables\Actions\Action::make('bulkUpload')
                     ->label('رفع دفعة حسابات')
                     ->icon('heroicon-o-arrow-up-tray')
                     ->color('primary')
+                    ->modalWidth('lg')
                     ->form([
-                        Forms\Components\Textarea::make('lines')
-                            ->label('الحسابات')
-                            ->helperText('سطر لكل حساب بصيغة email:password (أو مفصولة بمسافة/تاب)')
-                            ->rows(12)
-                            ->required(),
+                        Forms\Components\Placeholder::make('instructions')
+                            ->label('تعليمات')
+                            ->content(new \Illuminate\Support\HtmlString(
+                                '<div class="text-sm space-y-1 leading-6">'
+                                . '<div>• الملف يجب أن يكون Excel (.xlsx) أو CSV (.csv).</div>'
+                                . '<div>• الصف الأول: عناوين الأعمدة <b>email</b> و <b>password</b> بالترتيب.</div>'
+                                . '<div>• كل صف بعد ذلك = حساب واحد.</div>'
+                                . '<div>• حمّل النموذج الفارغ أعلاه لتعرف الترتيب الصحيح.</div>'
+                                . '</div>'
+                            )),
+
+                        Forms\Components\FileUpload::make('file')
+                            ->label('ملف الحسابات')
+                            ->required()
+                            ->disk('local')
+                            ->directory('club-creation-imports')
+                            ->acceptedFileTypes([
+                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                'application/vnd.ms-excel',
+                                'text/csv',
+                                'text/plain',
+                            ])
+                            ->maxSize(5120),
                     ])
                     ->action(function (array $data): void {
                         $tenantId = Filament::getTenant()?->id;
@@ -151,7 +183,34 @@ class AccountResource extends Resource
                             return;
                         }
 
-                        $stats = self::importLines((string) $data['lines'], $tenantId);
+                        $relativePath = is_array($data['file'] ?? null) ? reset($data['file']) : $data['file'];
+
+                        if (! $relativePath || ! Storage::disk('local')->exists($relativePath)) {
+                            Notification::make()->title('لم يُقرأ الملف')->danger()->send();
+
+                            return;
+                        }
+
+                        $fullPath = Storage::disk('local')->path($relativePath);
+                        $extension = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
+
+                        try {
+                            $rows = $extension === 'csv'
+                                ? self::readCsv($fullPath)
+                                : self::readXlsx($fullPath);
+                        } catch (\Throwable $e) {
+                            Notification::make()
+                                ->title('تعذّر قراءة الملف')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+
+                            return;
+                        } finally {
+                            Storage::disk('local')->delete($relativePath);
+                        }
+
+                        $stats = self::importRows($rows, $tenantId);
 
                         Notification::make()
                             ->title('تم الرفع')
@@ -174,30 +233,21 @@ class AccountResource extends Resource
             ->defaultSort('created_at', 'desc');
     }
 
-    protected static function importLines(string $raw, int $tenantId): array
+    /**
+     * @param  iterable<array{0:string,1:string}> $rows
+     * @return array{added:int,duplicates:int,skipped:int}
+     */
+    protected static function importRows(iterable $rows, int $tenantId): array
     {
         $added = 0;
         $duplicates = 0;
         $skipped = 0;
-
         $seenInBatch = [];
 
-        DB::transaction(function () use ($raw, $tenantId, &$added, &$duplicates, &$skipped, &$seenInBatch): void {
-            foreach (preg_split("/\r\n|\n|\r/", $raw) ?: [] as $line) {
-                $line = trim($line);
-                if ($line === '') {
-                    continue;
-                }
-
-                $parts = preg_split('/\s*[:\t]\s*|\s+/', $line, 2);
-                if (! is_array($parts) || count($parts) !== 2) {
-                    $skipped++;
-                    continue;
-                }
-
-                [$email, $password] = $parts;
-                $email = trim($email);
-                $password = trim($password);
+        DB::transaction(function () use ($rows, $tenantId, &$added, &$duplicates, &$skipped, &$seenInBatch): void {
+            foreach ($rows as $row) {
+                $email = trim((string) ($row[0] ?? ''));
+                $password = trim((string) ($row[1] ?? ''));
 
                 if ($email === '' || $password === '' || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
                     $skipped++;
@@ -226,6 +276,106 @@ class AccountResource extends Resource
         });
 
         return compact('added', 'duplicates', 'skipped');
+    }
+
+    /**
+     * @return list<array{0:string,1:string}>
+     */
+    protected static function readXlsx(string $path): array
+    {
+        $reader = new XlsxReader();
+        $reader->open($path);
+        $rows = [];
+
+        foreach ($reader->getSheetIterator() as $sheet) {
+            $isFirst = true;
+            foreach ($sheet->getRowIterator() as $row) {
+                $cells = array_map(fn ($c) => (string) $c, $row->toArray());
+
+                if ($isFirst) {
+                    $isFirst = false;
+                    // Skip if the first row looks like a header.
+                    $first = strtolower(trim($cells[0] ?? ''));
+                    if ($first === 'email' || $first === 'e-mail' || $first === 'البريد') {
+                        continue;
+                    }
+                }
+
+                if (($cells[0] ?? '') === '' && ($cells[1] ?? '') === '') {
+                    continue;
+                }
+
+                $rows[] = [$cells[0] ?? '', $cells[1] ?? ''];
+            }
+
+            break;
+        }
+
+        $reader->close();
+
+        return $rows;
+    }
+
+    /**
+     * @return list<array{0:string,1:string}>
+     */
+    protected static function readCsv(string $path): array
+    {
+        $handle = fopen($path, 'rb');
+        if ($handle === false) {
+            return [];
+        }
+
+        $rows = [];
+        $isFirst = true;
+        while (($cells = fgetcsv($handle)) !== false) {
+            if ($isFirst) {
+                $isFirst = false;
+                $first = strtolower(trim($cells[0] ?? ''));
+                if ($first === 'email' || $first === 'e-mail' || $first === 'البريد') {
+                    continue;
+                }
+            }
+
+            if (($cells[0] ?? '') === '' && ($cells[1] ?? '') === '') {
+                continue;
+            }
+
+            $rows[] = [$cells[0] ?? '', $cells[1] ?? ''];
+        }
+
+        fclose($handle);
+
+        return $rows;
+    }
+
+    /**
+     * Downloadable empty XLSX template so operators know the exact
+     * column order (email, password) before filling their sheet.
+     */
+    protected static function streamTemplate(): StreamedResponse
+    {
+        return new StreamedResponse(function (): void {
+            $writer = new XlsxWriter();
+            $writer->openToFile('php://output');
+
+            $headerStyle = (new Style())
+                ->setFontBold()
+                ->setBackgroundColor(Color::rgb(79, 70, 229))
+                ->setFontColor(Color::WHITE);
+
+            $writer->addRow(Row::fromValues(['email', 'password'], $headerStyle));
+
+            // A couple of illustrative rows to show the shape.
+            $writer->addRow(Row::fromValues(['example1@ea.com', 'Pass!Example123']));
+            $writer->addRow(Row::fromValues(['example2@ea.com', 'AnotherPass!456']));
+
+            $writer->close();
+        }, 200, [
+            'Content-Type'        => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition' => 'attachment; filename="club-accounts-template.xlsx"',
+            'Cache-Control'       => 'no-store, no-cache',
+        ]);
     }
 
     public static function getPages(): array
