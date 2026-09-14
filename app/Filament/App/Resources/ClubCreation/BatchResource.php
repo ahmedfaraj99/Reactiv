@@ -228,16 +228,37 @@ class BatchResource extends Resource
                     ->label('نسخ الرابط')
                     ->icon('heroicon-o-clipboard-document')
                     ->color('info')
-                    ->action(function (Batch $record): void {
+                    ->action(function (Batch $record, \Livewire\Component $livewire): void {
+                        $url = $record->publicUrl();
+                        $urlJs = json_encode($url, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+                        // Livewire's js() runs after the server action
+                        // returns. Try the modern clipboard API first,
+                        // fall back to a legacy textarea + execCommand
+                        // for in-app browsers (Messenger, older WebViews)
+                        // where clipboard access is gated.
+                        $livewire->js(<<<JS
+                            (function(){
+                                const text = {$urlJs};
+                                if (navigator.clipboard && window.isSecureContext) {
+                                    navigator.clipboard.writeText(text).catch(fallback);
+                                } else { fallback(); }
+                                function fallback(){
+                                    const ta = document.createElement('textarea');
+                                    ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+                                    document.body.appendChild(ta); ta.select();
+                                    try { document.execCommand('copy'); } catch(e){}
+                                    document.body.removeChild(ta);
+                                }
+                            })();
+                        JS);
+
                         Notification::make()
-                            ->title('الرابط')
-                            ->body($record->publicUrl())
+                            ->title('تم نسخ الرابط')
+                            ->body($url)
                             ->success()
                             ->send();
-                    })
-                    ->extraAttributes(fn (Batch $record): array => [
-                        'x-on:click' => 'navigator.clipboard.writeText(' . json_encode($record->publicUrl()) . ')',
-                    ]),
+                    }),
 
                 Tables\Actions\Action::make('viewAccounts')
                     ->label('عرض الحسابات')
