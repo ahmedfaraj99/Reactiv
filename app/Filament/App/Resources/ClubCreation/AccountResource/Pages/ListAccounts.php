@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace App\Filament\Resources\ClubCreation\AccountResource\Pages;
+namespace App\Filament\App\Resources\ClubCreation\AccountResource\Pages;
 
-use App\Filament\Resources\ClubCreation\AccountResource;
+use App\Filament\App\Resources\ClubCreation\AccountResource;
 use Filament\Resources\Pages\ListRecords;
 
 class ListAccounts extends ListRecords

@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Models\ClubCreation;
 
+use App\Models\Tenant;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
@@ -27,7 +29,7 @@ class Batch extends Model
     protected $table = 'club_creation_batches';
 
     protected $fillable = [
-        'token', 'recipient', 'account_count',
+        'tenant_id', 'token', 'recipient', 'account_count',
         'price_per_account', 'notes', 'opened_at',
     ];
 
@@ -56,6 +58,11 @@ class Batch extends Model
         } while (self::where('token', $t)->exists());
 
         return $t;
+    }
+
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class);
     }
 
     public function accounts(): HasMany

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models\ClubCreation;
 
+use App\Models\Tenant;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -31,7 +32,7 @@ class Account extends Model
     protected $table = 'club_creation_accounts';
 
     protected $fillable = [
-        'email', 'password', 'status', 'batch_id',
+        'tenant_id', 'email', 'password', 'status', 'batch_id',
         'done_at', 'exported_at',
     ];
 
@@ -41,6 +42,11 @@ class Account extends Model
             'done_at'     => 'datetime',
             'exported_at' => 'datetime',
         ];
+    }
+
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class);
     }
 
     public function batch(): BelongsTo

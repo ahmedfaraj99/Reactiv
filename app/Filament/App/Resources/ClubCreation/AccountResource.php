@@ -2,16 +2,19 @@
 
 declare(strict_types=1);
 
-namespace App\Filament\Resources\ClubCreation;
+namespace App\Filament\App\Resources\ClubCreation;
 
-use App\Filament\Resources\ClubCreation\AccountResource\Pages;
+use App\Enums\UserRole;
+use App\Filament\App\Resources\ClubCreation\AccountResource\Pages;
 use App\Models\ClubCreation\Account;
+use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 class AccountResource extends Resource
@@ -28,11 +31,25 @@ class AccountResource extends Resource
 
     protected static ?string $pluralModelLabel = 'الحسابات';
 
-    protected static ?int $navigationSort = 1;
+    protected static ?int $navigationSort = 90;
 
     public static function canAccess(): bool
     {
-        return auth()->user()?->isSuperAdmin() ?? false;
+        return auth()->user()?->hasRole(UserRole::TenantOwner->value) ?? false;
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        // Belt-and-braces tenant scoping. Filament's panel-level
+        // tenant() usually handles this, but the owner-only nature
+        // of this feature makes an explicit scope cheap and audit-
+        // friendly.
+        $tenantId = Filament::getTenant()?->id;
+
+        return parent::getEloquentQuery()->when(
+            $tenantId,
+            fn (Builder $q) => $q->where('tenant_id', $tenantId),
+        );
     }
 
     public static function form(Form $form): Form
@@ -54,9 +71,7 @@ class AccountResource extends Resource
     {
         return $table
             ->columns([
-                Tables\Columns\TextColumn::make('id')
-                    ->label('#')
-                    ->sortable(),
+                Tables\Columns\TextColumn::make('id')->label('#')->sortable(),
 
                 Tables\Columns\TextColumn::make('email')
                     ->label('البريد الإلكتروني')
@@ -128,7 +143,15 @@ class AccountResource extends Resource
                             ->required(),
                     ])
                     ->action(function (array $data): void {
-                        $stats = self::importLines((string) $data['lines']);
+                        $tenantId = Filament::getTenant()?->id;
+
+                        if ($tenantId === null) {
+                            Notification::make()->title('لا يوجد مستأجر نشط')->danger()->send();
+
+                            return;
+                        }
+
+                        $stats = self::importLines((string) $data['lines'], $tenantId);
 
                         Notification::make()
                             ->title('تم الرفع')
@@ -151,13 +174,7 @@ class AccountResource extends Resource
             ->defaultSort('created_at', 'desc');
     }
 
-    /**
-     * Parse a multi-line textarea into (email, password) pairs and
-     * insert only the ones we haven't already stored. The intake is
-     * deliberately forgiving about the separator: colon, tab, or any
-     * run of whitespace, since operators paste from many sources.
-     */
-    protected static function importLines(string $raw): array
+    protected static function importLines(string $raw, int $tenantId): array
     {
         $added = 0;
         $duplicates = 0;
@@ -165,14 +182,13 @@ class AccountResource extends Resource
 
         $seenInBatch = [];
 
-        DB::transaction(function () use ($raw, &$added, &$duplicates, &$skipped, &$seenInBatch): void {
+        DB::transaction(function () use ($raw, $tenantId, &$added, &$duplicates, &$skipped, &$seenInBatch): void {
             foreach (preg_split("/\r\n|\n|\r/", $raw) ?: [] as $line) {
                 $line = trim($line);
                 if ($line === '') {
                     continue;
                 }
 
-                // Split on the first colon, tab, or run of whitespace.
                 $parts = preg_split('/\s*[:\t]\s*|\s+/', $line, 2);
                 if (! is_array($parts) || count($parts) !== 2) {
                     $skipped++;
@@ -188,15 +204,20 @@ class AccountResource extends Resource
                     continue;
                 }
 
-                if (isset($seenInBatch[$email]) || Account::where('email', $email)->exists()) {
+                $exists = Account::where('tenant_id', $tenantId)
+                    ->where('email', $email)
+                    ->exists();
+
+                if (isset($seenInBatch[$email]) || $exists) {
                     $duplicates++;
                     continue;
                 }
 
                 Account::create([
-                    'email'    => $email,
-                    'password' => $password,
-                    'status'   => Account::STATUS_AVAILABLE,
+                    'tenant_id' => $tenantId,
+                    'email'     => $email,
+                    'password'  => $password,
+                    'status'    => Account::STATUS_AVAILABLE,
                 ]);
 
                 $seenInBatch[$email] = true;

@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace App\Filament\Resources\ClubCreation\BatchResource\Pages;
+namespace App\Filament\App\Resources\ClubCreation\BatchResource\Pages;
 
-use App\Filament\Resources\ClubCreation\BatchResource;
+use App\Filament\App\Resources\ClubCreation\BatchResource;
 use Filament\Resources\Pages\ListRecords;
 
 class ListBatches extends ListRecords

@@ -2,17 +2,20 @@
 
 declare(strict_types=1);
 
-namespace App\Filament\Resources\ClubCreation;
+namespace App\Filament\App\Resources\ClubCreation;
 
-use App\Filament\Resources\ClubCreation\BatchResource\Pages;
+use App\Enums\UserRole;
+use App\Filament\App\Resources\ClubCreation\BatchResource\Pages;
 use App\Models\ClubCreation\Account;
 use App\Models\ClubCreation\Batch;
+use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use OpenSpout\Common\Entity\Row;
@@ -33,17 +36,25 @@ class BatchResource extends Resource
 
     protected static ?string $pluralModelLabel = 'الدفعات';
 
-    protected static ?int $navigationSort = 2;
+    protected static ?int $navigationSort = 91;
 
     public static function canAccess(): bool
     {
-        return auth()->user()?->isSuperAdmin() ?? false;
+        return auth()->user()?->hasRole(UserRole::TenantOwner->value) ?? false;
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        $tenantId = Filament::getTenant()?->id;
+
+        return parent::getEloquentQuery()->when(
+            $tenantId,
+            fn (Builder $q) => $q->where('tenant_id', $tenantId),
+        );
     }
 
     public static function form(Form $form): Form
     {
-        // Edit form (rarely used — batches are usually created via the
-        // dedicated header action, which also picks accounts).
         return $form->schema([
             Forms\Components\TextInput::make('recipient')
                 ->label('الزبون (اسم/رقم/رابط)')
@@ -56,9 +67,7 @@ class BatchResource extends Resource
                 ->required()
                 ->minValue(0),
 
-            Forms\Components\Textarea::make('notes')
-                ->label('ملاحظات')
-                ->rows(3),
+            Forms\Components\Textarea::make('notes')->label('ملاحظات')->rows(3),
         ]);
     }
 
@@ -66,9 +75,7 @@ class BatchResource extends Resource
     {
         return $table
             ->columns([
-                Tables\Columns\TextColumn::make('id')
-                    ->label('#')
-                    ->sortable(),
+                Tables\Columns\TextColumn::make('id')->label('#')->sortable(),
 
                 Tables\Columns\TextColumn::make('recipient')
                     ->label('الزبون')
@@ -82,9 +89,7 @@ class BatchResource extends Resource
 
                 Tables\Columns\TextColumn::make('done_progress')
                     ->label('التقدم')
-                    ->state(function (Batch $r): string {
-                        return $r->doneCount() . ' / ' . $r->account_count;
-                    })
+                    ->state(fn (Batch $r): string => $r->doneCount() . ' / ' . $r->account_count)
                     ->badge()
                     ->color(fn (Batch $r): string => $r->isFullyDone() ? 'success' : 'warning'),
 
@@ -112,8 +117,6 @@ class BatchResource extends Resource
                         Forms\Components\Select::make('state')
                             ->label('الحالة')
                             ->options([
-                                'pending'  => 'قيد التنفيذ',
-                                'done'     => 'مكتمل',
                                 'unopened' => 'لم يُفتح بعد',
                             ]),
                     ])
@@ -143,7 +146,14 @@ class BatchResource extends Resource
                             ->required()
                             ->minValue(1)
                             ->default(1)
-                            ->helperText(fn (): string => 'المتاح حالياً: ' . Account::where('status', Account::STATUS_AVAILABLE)->count()),
+                            ->helperText(function (): string {
+                                $tenantId = Filament::getTenant()?->id;
+                                $available = Account::where('tenant_id', $tenantId)
+                                    ->where('status', Account::STATUS_AVAILABLE)
+                                    ->count();
+
+                                return 'المتاح حالياً: ' . $available;
+                            }),
 
                         Forms\Components\TextInput::make('price_per_account')
                             ->label('السعر لكل حساب')
@@ -157,10 +167,19 @@ class BatchResource extends Resource
                             ->rows(2),
                     ])
                     ->action(function (array $data): void {
+                        $tenantId = Filament::getTenant()?->id;
+
+                        if ($tenantId === null) {
+                            Notification::make()->title('لا يوجد مستأجر نشط')->danger()->send();
+
+                            return;
+                        }
+
                         $count = (int) $data['count'];
 
-                        $batch = DB::transaction(function () use ($data, $count): ?Batch {
-                            $accounts = Account::where('status', Account::STATUS_AVAILABLE)
+                        $batch = DB::transaction(function () use ($data, $count, $tenantId): ?Batch {
+                            $accounts = Account::where('tenant_id', $tenantId)
+                                ->where('status', Account::STATUS_AVAILABLE)
                                 ->orderBy('id')
                                 ->limit($count)
                                 ->lockForUpdate()
@@ -171,6 +190,7 @@ class BatchResource extends Resource
                             }
 
                             $batch = Batch::create([
+                                'tenant_id'         => $tenantId,
                                 'recipient'         => $data['recipient'],
                                 'account_count'     => $count,
                                 'price_per_account' => $data['price_per_account'],
@@ -209,11 +229,6 @@ class BatchResource extends Resource
                     ->icon('heroicon-o-clipboard-document')
                     ->color('info')
                     ->action(function (Batch $record): void {
-                        // The copy itself is handled client-side via
-                        // ->extraAttributes below; this closure just
-                        // surfaces the URL as a notification too so
-                        // it's always visible even if the clipboard
-                        // API is blocked in the browser context.
                         Notification::make()
                             ->title('الرابط')
                             ->body($record->publicUrl())
@@ -237,8 +252,6 @@ class BatchResource extends Resource
                     ->requiresConfirmation()
                     ->modalDescription('الحسابات المُسنَدة لهذه الدفعة ستعود إلى "متاح".')
                     ->before(function (Batch $record): void {
-                        // Return still-untouched accounts to the pool.
-                        // Completed ones stay attached for history.
                         Account::where('batch_id', $record->id)
                             ->where('status', Account::STATUS_ASSIGNED)
                             ->update([
@@ -261,11 +274,6 @@ class BatchResource extends Resource
             ->defaultSort('created_at', 'desc');
     }
 
-    /**
-     * Stream an XLSX of every done account across the selected batches
-     * and mark them as exported so the same rows don't get delivered
-     * twice.
-     */
     protected static function exportDoneAccounts(Collection $records): StreamedResponse
     {
         $batchIds = $records->pluck('id')->all();
