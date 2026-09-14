@@ -87,6 +87,31 @@ class BatchResource extends Resource
                     ->badge()
                     ->color('gray'),
 
+                Tables\Columns\TextColumn::make('overall_status')
+                    ->label('الحالة')
+                    ->state(function (Batch $r): string {
+                        $done = $r->doneCount();
+                        if ($r->opened_at === null) {
+                            return 'لم يُفتح';
+                        }
+                        if ($done === 0) {
+                            return 'قيد التنفيذ';
+                        }
+                        if ($done >= $r->account_count) {
+                            return 'مكتمل';
+                        }
+
+                        return 'قيد التنفيذ';
+                    })
+                    ->badge()
+                    ->color(function (Batch $r): string {
+                        if ($r->opened_at === null) {
+                            return 'gray';
+                        }
+
+                        return $r->isFullyDone() ? 'success' : 'warning';
+                    }),
+
                 Tables\Columns\TextColumn::make('done_progress')
                     ->label('التقدم')
                     ->state(fn (Batch $r): string => $r->doneCount() . ' / ' . $r->account_count)
