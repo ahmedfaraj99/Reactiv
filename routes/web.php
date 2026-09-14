@@ -63,7 +63,11 @@ Route::middleware('signed')->group(function (): void {
 // batch is bound to a free-text recipient chosen by the owner at
 // creation time.
 Route::middleware('web')->group(function (): void {
-    Route::get('/cc/{token}', [ClubCreationDeliveryController::class, 'show'])
+    // The optional {slug} segment carries the recipient's label so a
+    // link forwarded to the wrong person is visibly wrong; matching
+    // is done on the token alone in the controller.
+    Route::get('/cc/{token}/{slug?}', [ClubCreationDeliveryController::class, 'show'])
+        ->where('slug', '[^/]+')
         ->name('club-creation.deliver');
     Route::post('/cc/{token}/done/{account}', [ClubCreationDeliveryController::class, 'markDone'])
         ->name('club-creation.done');

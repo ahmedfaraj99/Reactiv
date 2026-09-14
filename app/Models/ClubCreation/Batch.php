@@ -72,7 +72,40 @@ class Batch extends Model
 
     public function publicUrl(): string
     {
-        return route('club-creation.deliver', ['token' => $this->token]);
+        return route('club-creation.deliver', [
+            'token' => $this->token,
+            'slug'  => $this->recipientSlug(),
+        ]);
+    }
+
+    /**
+     * URL-safe rendering of the recipient label to embed in the
+     * delivery link path so a link forwarded to the wrong person is
+     * visibly wrong at a glance. Cosmetic only — the controller
+     * matches on the token alone.
+     */
+    public function recipientSlug(): string
+    {
+        $recipient = trim((string) $this->recipient);
+        if ($recipient === '') {
+            return 'link';
+        }
+
+        // Try Str::slug first for latin names; if the result is empty
+        // (pure Arabic / non-latin), fall back to a manual pass that
+        // preserves unicode letters and digits.
+        $slug = Str::slug($recipient, '-', 'en');
+
+        if ($slug === '') {
+            $slug = preg_replace('/[^\p{L}\p{N}]+/u', '-', $recipient) ?? '';
+            $slug = trim($slug, '-');
+        }
+
+        if ($slug === '') {
+            return 'link';
+        }
+
+        return Str::limit($slug, 40, '');
     }
 
     public function doneCount(): int
