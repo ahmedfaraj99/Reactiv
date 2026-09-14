@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Http\Controllers\ActivationController;
 use App\Http\Controllers\Auth\TwoFactorSetupController;
 use App\Http\Controllers\Auth\TwoFactorVerifyController;
+use App\Http\Controllers\ClubCreation\DeliveryController as ClubCreationDeliveryController;
 use App\Http\Controllers\ProofController;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -55,6 +56,17 @@ Route::get('/health/deep', function () {
 Route::middleware('signed')->group(function (): void {
     Route::get('/activate/{user}', [ActivationController::class, 'show'])->name('activation.show');
     Route::post('/activate/{user}', [ActivationController::class, 'store'])->name('activation.store');
+});
+
+// Public delivery link for the "Create EA Accounts" service. The token
+// itself is the auth — no login, no persistent recipient record. The
+// batch is bound to a free-text recipient chosen by the owner at
+// creation time.
+Route::middleware('web')->group(function (): void {
+    Route::get('/cc/{token}', [ClubCreationDeliveryController::class, 'show'])
+        ->name('club-creation.deliver');
+    Route::post('/cc/{token}/done/{account}', [ClubCreationDeliveryController::class, 'markDone'])
+        ->name('club-creation.done');
 });
 
 Route::middleware(['web', 'auth'])->group(function (): void {
