@@ -274,7 +274,48 @@ class AlertResource extends Resource
                             Notification::make()->success()->title('تم حل '.$records->count())->send();
                         })
                         ->deselectRecordsAfterCompletion(),
+
+                    // Owner-only purge for pruning old/noise alerts. The
+                    // resource has canDelete=false so this is the only way
+                    // rows leave the table. Use the "محلولة فقط" filter
+                    // (or select-all after filtering by date/type) to scope
+                    // the sweep before hitting this.
+                    Tables\Actions\BulkAction::make('delete_bulk')
+                        ->label('حذف نهائي')
+                        ->icon('heroicon-o-trash')
+                        ->color('danger')
+                        ->visible(fn (): bool => auth()->user()?->isTenantOwner() ?? false)
+                        ->requiresConfirmation()
+                        ->modalHeading('حذف التنبيهات نهائياً')
+                        ->modalDescription('حذف نهائي لا رجعة فيه للتنبيهات المحددة. استخدم فلتر "محلولة فقط" قبلها لتحديد التنبيهات القديمة اللي انتهيت منها.')
+                        ->modalSubmitActionLabel('احذف نهائياً')
+                        ->action(function (Collection $records): void {
+                            $count = $records->count();
+                            Alert::whereIn('id', $records->pluck('id'))->delete();
+                            Notification::make()->success()->title('حُذف نهائياً '.$count.' تنبيه')->send();
+                        })
+                        ->deselectRecordsAfterCompletion(),
                 ]),
+            ])
+            ->headerActions([
+                // Fast path for the common cleanup: nuke every resolved
+                // alert in the tenant. Owner-only, ignores current
+                // selection/filters so it's a proper "empty the archive"
+                // rather than "delete what's on screen".
+                Tables\Actions\Action::make('purge_resolved')
+                    ->label('حذف كل التنبيهات المحلولة')
+                    ->icon('heroicon-o-fire')
+                    ->color('danger')
+                    ->visible(fn (): bool => auth()->user()?->isTenantOwner() ?? false)
+                    ->requiresConfirmation()
+                    ->modalHeading('حذف كل التنبيهات المحلولة')
+                    ->modalDescription('يُمسح نهائياً كل تنبيه تم حله في المستأجر الحالي. لا يمكن التراجع.')
+                    ->modalSubmitActionLabel('احذف الكل نهائياً')
+                    ->action(function (): void {
+                        $count = static::getEloquentQuery()->where('resolved', true)->count();
+                        static::getEloquentQuery()->where('resolved', true)->delete();
+                        Notification::make()->success()->title('حُذف نهائياً '.$count.' تنبيه')->send();
+                    }),
             ])
             ->defaultSort('created_at', 'desc');
     }
