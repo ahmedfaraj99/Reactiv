@@ -966,6 +966,44 @@ class AccountResource extends Resource
                                 ->send();
                         })
                         ->deselectRecordsAfterCompletion(),
+
+                    // Escape hatch for the owner: wipe any account regardless
+                    // of status. The two-step archive→delete flow above stays
+                    // in place for the day-to-day safety it provides; this is
+                    // for cleanups (test data, mistaken bulk imports) where
+                    // the owner has already decided the rows should go.
+                    Tables\Actions\BulkAction::make('force_delete_any_bulk')
+                        ->label('مسح نهائي لأي حساب (خطر)')
+                        ->icon('heroicon-o-fire')
+                        ->color('danger')
+                        ->visible(fn (): bool => auth()->user()?->isTenantOwner() ?? false)
+                        ->requiresConfirmation()
+                        ->modalHeading('مسح نهائي لأي حساب')
+                        ->modalDescription('حذف نهائي فوري لكل الحسابات المحددة بغضّ النظر عن حالتها (متاح، مخصّص، مكتمل، مؤرشف...). يشمل سجل الكشف المرتبط بها. لا يمكن التراجع.')
+                        ->modalSubmitActionLabel('احذف الآن نهائياً')
+                        ->action(function (Collection $records): void {
+                            $actorId = auth()->id();
+
+                            DB::transaction(function () use ($records, $actorId): void {
+                                foreach ($records as $account) {
+                                    \App\Models\AccountAdminLog::create([
+                                        'tenant_id'            => $account->tenant_id,
+                                        'actor_id'             => $actorId,
+                                        'account_id'           => $account->id,
+                                        'account_email_masked' => self::maskEmail($account->email),
+                                        'action'               => \App\Models\AccountAdminLog::ACTION_PERMANENTLY_DELETED,
+                                        'created_at'           => now(),
+                                    ]);
+                                    $account->forceDelete();
+                                }
+                            });
+
+                            Notification::make()
+                                ->success()
+                                ->title('مُسح نهائياً '.$records->count().' حساباً')
+                                ->send();
+                        })
+                        ->deselectRecordsAfterCompletion(),
                 ]),
             ])
             ->defaultSort('created_at', 'desc')
