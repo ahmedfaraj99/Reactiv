@@ -3,25 +3,24 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 /**
- * Enforce (tenant_id, email) uniqueness on club_creation_accounts at
- * the database level so the check-then-insert path in the importer
- * can't race under concurrent uploads. Cleans up any pre-existing
- * duplicates first (keeping the earliest row per tenant+email) so the
- * unique index doesn't fail to create on rollout.
+ * Enforce (tenant_id, email) uniqueness on live club_creation_accounts
+ * rows at the database level so the check-then-insert path in the
+ * importer can't race under concurrent uploads.
+ *
+ * Uses a Postgres PARTIAL unique index scoped to `deleted_at IS NULL`
+ * so soft-deleted duplicates (kept for audit) don't conflict with the
+ * live row that replaced them. Cleans up any pre-existing live
+ * duplicates first by soft-deleting all but the earliest row.
  */
 return new class extends Migration
 {
     public function up(): void
     {
-        // Drop duplicates so index creation succeeds. Keep the row
-        // with the smallest id per (tenant_id, email); soft-delete
-        // the rest — they're not force-deleted so we can still audit
-        // what was removed.
+        // Keep the row with the smallest id per (tenant_id, email);
+        // soft-delete the rest so the audit trail is preserved.
         $dupes = DB::table('club_creation_accounts')
             ->select('tenant_id', 'email', DB::raw('MIN(id) as keeper_id'))
             ->whereNull('deleted_at')
@@ -38,15 +37,15 @@ return new class extends Migration
                 ->update(['deleted_at' => now()]);
         }
 
-        Schema::table('club_creation_accounts', function (Blueprint $table): void {
-            $table->unique(['tenant_id', 'email'], 'club_accounts_tenant_email_unique');
-        });
+        DB::statement(
+            'CREATE UNIQUE INDEX club_accounts_tenant_email_unique '
+            .'ON club_creation_accounts (tenant_id, email) '
+            .'WHERE deleted_at IS NULL'
+        );
     }
 
     public function down(): void
     {
-        Schema::table('club_creation_accounts', function (Blueprint $table): void {
-            $table->dropUnique('club_accounts_tenant_email_unique');
-        });
+        DB::statement('DROP INDEX IF EXISTS club_accounts_tenant_email_unique');
     }
 };
