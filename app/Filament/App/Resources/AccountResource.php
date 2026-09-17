@@ -98,8 +98,7 @@ class AccountResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('id')
                     ->label('#')
-                    ->sortable()
-                    ->searchable()
+                    ->rowIndex()
                     ->toggleable(),
 
                 Tables\Columns\TextColumn::make('email')
