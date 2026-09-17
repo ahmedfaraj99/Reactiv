@@ -191,8 +191,8 @@
         <div class="mb-4 flex items-center gap-3 rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:ring-amber-500/30">
             <x-heroicon-o-lock-closed class="h-6 w-6 flex-shrink-0 text-amber-600 dark:text-amber-400" />
             <div class="flex-1">
-                <p class="text-sm font-bold text-amber-900 dark:text-amber-300">أنت مقفل على حساب #{{ $locked->account_id }} حالياً</p>
-                <p class="mt-0.5 text-sm text-amber-800 dark:text-amber-200">أكمله بإرسال إثبات الإنجاز أو تسجيل بيانات خطأ قبل فتح أي حساب آخر.</p>
+                <p class="text-sm font-bold text-amber-900 dark:text-amber-300">بلغت الحد الأقصى ({{ $this->getMaxConcurrent() }}) للحسابات المفتوحة</p>
+                <p class="mt-0.5 text-sm text-amber-800 dark:text-amber-200">أكمل حساباً (إثبات إنجاز أو تسجيل بيانات خطأ) قبل فتح حساب جديد. ابدأ بحساب #{{ $locked->account_id }}.</p>
             </div>
             <a href="{{ route('filament.app.pages.activation', ['tenant' => filament()->getTenant()->slug, 'assignment' => $locked->id]) }}"
                class="flex-shrink-0 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-amber-700">

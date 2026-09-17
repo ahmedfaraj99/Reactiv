@@ -32,6 +32,14 @@ class AccountAssignment extends Model
     public const PSN_TOTP_BASE_LIMIT = 1;
     public const EA_TOTP_BASE_LIMIT  = 1;
 
+    /**
+     * How many started activations an employee may have open at once.
+     * Below this cap they can freely start new accounts or switch between
+     * the ones they've begun; at the cap they must finish or fail one
+     * before opening another.
+     */
+    public const MAX_CONCURRENT_ACTIVATIONS = 3;
+
     protected $fillable = [
         'tenant_id', 'account_id', 'employee_id', 'supervisor_id',
         'status', 'assigned_at', 'started_at', 'credentials_revealed_at', 'first_totp_at',
@@ -143,11 +151,14 @@ class AccountAssignment extends Model
     }
 
     /**
-     * The one account this employee is currently locked into, if any —
-     * an in-progress assignment where they've already pulled at least
-     * one 2FA code. Prevents hopping between accounts mid-activation.
+     * All started activations for this employee — in-progress rows where
+     * they've already pulled at least one 2FA code. An employee may have
+     * up to MAX_CONCURRENT_ACTIVATIONS of these open at once and switch
+     * between them freely from "حساباتي".
+     *
+     * @return \Illuminate\Support\Collection<int, self>
      */
-    public static function lockedFor(int $employeeId): ?self
+    public static function activeStartedFor(int $employeeId): \Illuminate\Support\Collection
     {
         return self::query()
             ->where('employee_id', $employeeId)
@@ -156,6 +167,34 @@ class AccountAssignment extends Model
                 $q->where('psn_totp_generations', '>', 0)
                     ->orWhere('ea_totp_generations', '>', 0);
             })
-            ->first();
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
+     * The account this employee must return to, if any. Returns null
+     * unless they've hit the concurrent-activations cap AND the target
+     * assignment isn't already one of the started ones — in which case
+     * they can no longer open a NEW activation and must finish an open
+     * one first. Non-activation pages pass null for $currentAssignmentId
+     * and are always allowed.
+     */
+    public static function lockedFor(int $employeeId, ?int $currentAssignmentId = null): ?self
+    {
+        if ($currentAssignmentId === null) {
+            return null;
+        }
+
+        $started = self::activeStartedFor($employeeId);
+
+        if ($started->contains(fn (self $a): bool => $a->id === $currentAssignmentId)) {
+            return null;
+        }
+
+        if ($started->count() < self::MAX_CONCURRENT_ACTIVATIONS) {
+            return null;
+        }
+
+        return $started->first();
     }
 }

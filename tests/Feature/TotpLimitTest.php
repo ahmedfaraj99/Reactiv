@@ -69,40 +69,96 @@ class TotpLimitTest extends TestCase
         $this->assertTrue($assignment->canGeneratePsnTotp());
     }
 
-    public function test_employee_is_locked_to_the_assignment_once_they_pull_a_code(): void
+    public function test_employee_may_have_several_started_activations_below_the_cap(): void
     {
         $tenant = $this->makeTenant();
         $office = $this->makeOffice($tenant);
         $employee = $this->makeUser($tenant, UserRole::Employee, $office);
 
-        $accountA = $this->makeAccount($tenant, ['email' => 'a@example.com', 'email_fingerprint' => \App\Models\Account::fingerprint('a@example.com')]);
-        $accountB = $this->makeAccount($tenant, ['email' => 'b@example.com', 'email_fingerprint' => \App\Models\Account::fingerprint('b@example.com')]);
+        $accounts = [];
+        $started = [];
+        for ($i = 0; $i < AccountAssignment::MAX_CONCURRENT_ACTIVATIONS - 1; $i++) {
+            $email = "u{$i}@example.com";
+            $accounts[$i] = $this->makeAccount($tenant, [
+                'email'             => $email,
+                'email_fingerprint' => \App\Models\Account::fingerprint($email),
+            ]);
+            $started[$i] = $this->makeAssignment($tenant, $accounts[$i], $employee, [
+                'status'               => AccountAssignment::STATUS_IN_PROGRESS,
+                'psn_totp_generations' => 1,
+            ]);
+        }
 
-        $assignmentA = $this->makeAssignment($tenant, $accountA, $employee, [
-            'status'                => AccountAssignment::STATUS_IN_PROGRESS,
-            'psn_totp_generations'  => 1,
-        ]);
-        $this->makeAssignment($tenant, $accountB, $employee, [
-            'status' => AccountAssignment::STATUS_IN_PROGRESS,
-        ]);
+        // A fresh, unstarted assignment is still openable — below the cap.
+        $fresh = $this->makeAssignment(
+            $tenant,
+            $this->makeAccount($tenant, ['email' => 'fresh@example.com', 'email_fingerprint' => \App\Models\Account::fingerprint('fresh@example.com')]),
+            $employee,
+            ['status' => AccountAssignment::STATUS_PENDING]
+        );
 
-        $locked = AccountAssignment::lockedFor($employee->id);
-
-        $this->assertNotNull($locked);
-        $this->assertSame($assignmentA->id, $locked->id);
+        $this->assertNull(AccountAssignment::lockedFor($employee->id, $fresh->id));
+        foreach ($started as $s) {
+            $this->assertNull(AccountAssignment::lockedFor($employee->id, $s->id));
+        }
     }
 
-    public function test_employee_is_not_locked_before_pulling_any_code(): void
+    public function test_employee_at_activation_cap_cannot_open_a_new_assignment(): void
     {
         $tenant = $this->makeTenant();
         $office = $this->makeOffice($tenant);
         $employee = $this->makeUser($tenant, UserRole::Employee, $office);
-        $account = $this->makeAccount($tenant);
 
-        $this->makeAssignment($tenant, $account, $employee, [
-            'status' => AccountAssignment::STATUS_IN_PROGRESS,
-        ]);
+        $started = [];
+        for ($i = 0; $i < AccountAssignment::MAX_CONCURRENT_ACTIVATIONS; $i++) {
+            $email = "u{$i}@example.com";
+            $account = $this->makeAccount($tenant, [
+                'email'             => $email,
+                'email_fingerprint' => \App\Models\Account::fingerprint($email),
+            ]);
+            $started[$i] = $this->makeAssignment($tenant, $account, $employee, [
+                'status'               => AccountAssignment::STATUS_IN_PROGRESS,
+                'psn_totp_generations' => 1,
+            ]);
+        }
 
+        $fresh = $this->makeAssignment(
+            $tenant,
+            $this->makeAccount($tenant, ['email' => 'fresh@example.com', 'email_fingerprint' => \App\Models\Account::fingerprint('fresh@example.com')]),
+            $employee,
+            ['status' => AccountAssignment::STATUS_PENDING]
+        );
+
+        // Opening the fresh assignment is blocked at the cap.
+        $locked = AccountAssignment::lockedFor($employee->id, $fresh->id);
+        $this->assertNotNull($locked);
+        $this->assertSame($started[0]->id, $locked->id);
+
+        // But any already-started assignment is still openable.
+        foreach ($started as $s) {
+            $this->assertNull(AccountAssignment::lockedFor($employee->id, $s->id));
+        }
+    }
+
+    public function test_lockedfor_without_target_never_blocks_navigation(): void
+    {
+        $tenant = $this->makeTenant();
+        $office = $this->makeOffice($tenant);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $office);
+
+        for ($i = 0; $i < AccountAssignment::MAX_CONCURRENT_ACTIVATIONS; $i++) {
+            $email = "u{$i}@example.com";
+            $account = $this->makeAccount($tenant, [
+                'email'             => $email,
+                'email_fingerprint' => \App\Models\Account::fingerprint($email),
+            ]);
+            $this->makeAssignment($tenant, $account, $employee, [
+                'status'               => AccountAssignment::STATUS_IN_PROGRESS,
+                'psn_totp_generations' => 1,
+            ]);
+        }
+
+        // Non-activation pages pass null and are always allowed.
         $this->assertNull(AccountAssignment::lockedFor($employee->id));
     }
 }

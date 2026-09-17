@@ -10,11 +10,12 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Once an employee has pulled a 2FA code for an account, they're locked
- * to it — this middleware bounces any other page in the app panel back
- * to that account's activation screen until they complete or fail it.
- * Scoped to the panel's own page routes; it doesn't touch the shared
- * Livewire update endpoint, so the locked page itself keeps working.
+ * Employees may keep up to MAX_CONCURRENT_ACTIVATIONS started accounts
+ * open at once and switch between them from "حساباتي". Once they hit
+ * the cap, opening a NEW activation is blocked — this middleware then
+ * bounces those requests to one of the already-started activations
+ * until it's finished or failed. Non-activation pages are always let
+ * through so the employee can navigate between their open accounts.
  */
 class EnforceSingleActiveAccount
 {
@@ -26,20 +27,17 @@ class EnforceSingleActiveAccount
             return $next($request);
         }
 
-        $locked = AccountAssignment::lockedFor($user->id);
-        if ($locked === null) {
-            return $next($request);
-        }
-
+        $currentAssignmentId = null;
         if ($request->routeIs('filament.app.pages.activation')) {
             $routeAssignment = $request->route('assignment');
-            $assignmentId = $routeAssignment instanceof AccountAssignment
+            $currentAssignmentId = $routeAssignment instanceof AccountAssignment
                 ? $routeAssignment->id
                 : (int) $routeAssignment;
+        }
 
-            if ($assignmentId === $locked->id) {
-                return $next($request);
-            }
+        $locked = AccountAssignment::lockedFor($user->id, $currentAssignmentId);
+        if ($locked === null) {
+            return $next($request);
         }
 
         return redirect()->to(

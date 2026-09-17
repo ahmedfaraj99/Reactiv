@@ -177,13 +177,13 @@ class Activation extends Page
             return;
         }
 
-        // One account at a time: once the employee has pulled a 2FA code
-        // for a DIFFERENT assignment, they're locked to it until they
-        // complete it or flag it as failed — no hopping between accounts.
-        // Show a clear block screen here rather than silently bouncing
-        // them to the other account, which reads as "it just switched me".
-        $locked = AccountAssignment::lockedFor((int) auth()->id());
-        if ($locked !== null && $locked->id !== $this->assignment->id) {
+        // Employees may keep up to MAX_CONCURRENT_ACTIVATIONS started
+        // accounts open at once. When they've hit that cap and open a
+        // NEW activation, block it here rather than silently switching
+        // to one of the started ones — which would read as "it just
+        // changed accounts on me".
+        $locked = AccountAssignment::lockedFor((int) auth()->id(), $this->assignment->id);
+        if ($locked !== null) {
             $this->blockingLock = $locked;
             return;
         }

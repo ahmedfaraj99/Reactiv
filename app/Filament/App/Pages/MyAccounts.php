@@ -48,7 +48,31 @@ class MyAccounts extends Page implements HasTable
 
     public function getLockedAssignment(): ?AccountAssignment
     {
-        return AccountAssignment::lockedFor((int) auth()->id());
+        $started = AccountAssignment::activeStartedFor((int) auth()->id());
+        if ($started->count() < AccountAssignment::MAX_CONCURRENT_ACTIVATIONS) {
+            return null;
+        }
+        return $started->first();
+    }
+
+    public function getStartedCount(): int
+    {
+        return AccountAssignment::activeStartedFor((int) auth()->id())->count();
+    }
+
+    public function getMaxConcurrent(): int
+    {
+        return AccountAssignment::MAX_CONCURRENT_ACTIVATIONS;
+    }
+
+    /**
+     * True when opening this specific row would violate the concurrent
+     * activations cap — either it isn't one of the already-started
+     * accounts and the employee has already hit the cap.
+     */
+    public function isRowLocked(int $assignmentId): bool
+    {
+        return AccountAssignment::lockedFor((int) auth()->id(), $assignmentId) !== null;
     }
 
     /**
@@ -306,8 +330,7 @@ class MyAccounts extends Page implements HasTable
                     ->icon(fn (AccountAssignment $record): ?string => ($record->assigned_at?->diffInHours(now()) ?? 0) >= 24 ? 'heroicon-m-clock' : null),
             ])
             ->recordUrl(function (AccountAssignment $record) {
-                $locked = $this->getLockedAssignment();
-                if ($locked !== null && $locked->id !== $record->id) {
+                if ($this->isRowLocked($record->id)) {
                     return null;
                 }
                 return route('filament.app.pages.activation', [
@@ -317,16 +340,12 @@ class MyAccounts extends Page implements HasTable
             })
             ->actions([
                 Tables\Actions\Action::make('open')
-                    ->label(function (AccountAssignment $record): string {
-                        $locked = $this->getLockedAssignment();
-                        return ($locked !== null && $locked->id !== $record->id) ? 'مقفل — أكمل الحساب الحالي أولاً' : 'افتح';
-                    })
+                    ->label(fn (AccountAssignment $record): string => $this->isRowLocked($record->id)
+                        ? 'مقفل — أكمل حساباً مفتوحاً أولاً'
+                        : 'افتح')
                     ->icon('heroicon-m-arrow-left')
                     ->iconPosition('after')
-                    ->disabled(function (AccountAssignment $record): bool {
-                        $locked = $this->getLockedAssignment();
-                        return $locked !== null && $locked->id !== $record->id;
-                    })
+                    ->disabled(fn (AccountAssignment $record): bool => $this->isRowLocked($record->id))
                     ->url(fn (AccountAssignment $record) => route('filament.app.pages.activation', [
                         'tenant'     => filament()->getTenant()->slug,
                         'assignment' => $record->id,
