@@ -216,7 +216,12 @@ class AssignmentReviewResource extends Resource
                                 'reviewed_at'  => now(),
                                 'completed_at' => now(),
                             ]);
-                            $record->account->update([
+                            // The account may have been force-deleted between
+                            // the employee's submission and this approval —
+                            // the assignment row survives (nullOnDelete FK)
+                            // so the employee gets credit for the work, but
+                            // there's no account row left to mark activated.
+                            $record->account?->update([
                                 'status'       => 'activated',
                                 'activated_at' => now(),
                             ]);

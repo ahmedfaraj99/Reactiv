@@ -119,13 +119,6 @@ class AlertResource extends Resource
                     ->boolean(),
             ])
             ->filters([
-                Tables\Filters\TernaryFilter::make('resolved')
-                    ->label('الحالة')
-                    ->placeholder('الكل')
-                    ->trueLabel('محلولة فقط')
-                    ->falseLabel('غير محلولة فقط')
-                    ->default(false),
-
                 Tables\Filters\SelectFilter::make('severity')
                     ->label('الخطورة')
                     ->options(AlertSeverity::options()),

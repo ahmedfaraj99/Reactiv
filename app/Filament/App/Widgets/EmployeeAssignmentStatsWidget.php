@@ -12,12 +12,21 @@ use Filament\Widgets\StatsOverviewWidget\Stat;
  * Personal snapshot of the employee's own assignments — split out from
  * the "حساباتي" list page so the dashboard carries the numbers and the
  * accounts page stays a pure working list.
+ *
+ * Two rows of four:
+ *   1. Current state (open, in progress, awaiting review, urgent)
+ *   2. Completion history (today, this week, this month, all time)
  */
 class EmployeeAssignmentStatsWidget extends BaseWidget
 {
     protected static ?int $sort = 1;
 
     protected int|string|array $columnSpan = 'full';
+
+    protected function getColumns(): int
+    {
+        return 4;
+    }
 
     public static function canView(): bool
     {
@@ -26,8 +35,14 @@ class EmployeeAssignmentStatsWidget extends BaseWidget
 
     protected function getStats(): array
     {
-        $assignments = AccountAssignment::query()
-            ->where('employee_id', auth()->id())
+        $userId = (int) auth()->id();
+        $now    = now();
+
+        // Open work (single query with grouped counts is overkill for
+        // 3 statuses — the plain get() below stays readable and only
+        // returns the ~5-15 rows an employee has open at once).
+        $open = AccountAssignment::query()
+            ->where('employee_id', $userId)
             ->whereIn('status', [
                 AccountAssignment::STATUS_PENDING,
                 AccountAssignment::STATUS_IN_PROGRESS,
@@ -35,27 +50,71 @@ class EmployeeAssignmentStatsWidget extends BaseWidget
             ])
             ->get(['status', 'assigned_at']);
 
-        $total          = $assignments->count();
-        $inProgress     = $assignments->where('status', AccountAssignment::STATUS_IN_PROGRESS)->count();
-        $awaitingReview = $assignments->where('status', AccountAssignment::STATUS_AWAITING_REVIEW)->count();
-        $urgent         = $assignments->filter(fn ($a) => $a->assigned_at?->diffInHours(now()) >= 24)->count();
+        $openTotal      = $open->count();
+        $inProgress     = $open->where('status', AccountAssignment::STATUS_IN_PROGRESS)->count();
+        $awaitingReview = $open->where('status', AccountAssignment::STATUS_AWAITING_REVIEW)->count();
+        $urgent         = $open->filter(fn ($a) => $a->assigned_at?->diffInHours($now) >= 24)->count();
+
+        // Completion history uses `completed_at`, which is stamped when
+        // the supervisor finalizes the activation. `submitted_at` would
+        // count proof uploads that were later rejected — misleading for
+        // an "how many did I actually finish" number.
+        $completedBase = AccountAssignment::query()
+            ->where('employee_id', $userId)
+            ->where('status', AccountAssignment::STATUS_COMPLETED);
+
+        $completedToday = (clone $completedBase)->whereDate('completed_at', $now->toDateString())->count();
+        $completedWeek  = (clone $completedBase)->where('completed_at', '>=', $now->copy()->startOfWeek())->count();
+        $completedMonth = (clone $completedBase)->where('completed_at', '>=', $now->copy()->startOfMonth())->count();
+        $completedAll   = (clone $completedBase)->count();
+
+        $failedAll = AccountAssignment::query()
+            ->where('employee_id', $userId)
+            ->where('status', AccountAssignment::STATUS_FAILED)
+            ->count();
 
         return [
-            Stat::make('إجمالي المخصَّص لك', number_format($total))
+            Stat::make('المفتوحة الآن', number_format($openTotal))
+                ->description('كل الحسابات اللي مازالت في يدك')
                 ->descriptionIcon('heroicon-m-inbox-stack')
                 ->color('gray'),
 
             Stat::make('قيد التنفيذ', number_format($inProgress))
+                ->description('بدأت الشغل عليها')
                 ->descriptionIcon('heroicon-m-arrow-path')
                 ->color('warning'),
 
             Stat::make('بانتظار المراجعة', number_format($awaitingReview))
+                ->description('رفعت الإثبات، بانتظار المشرف')
                 ->descriptionIcon('heroicon-m-clipboard-document-check')
                 ->color('primary'),
 
             Stat::make('عاجل (+24 ساعة)', number_format($urgent))
+                ->description('حسابات مضى عليها يوم أو أكثر')
                 ->descriptionIcon('heroicon-m-clock')
                 ->color($urgent > 0 ? 'danger' : 'gray'),
+
+            Stat::make('أكملت اليوم', number_format($completedToday))
+                ->description('حسابات وافق عليها المشرف اليوم')
+                ->descriptionIcon('heroicon-m-check-badge')
+                ->color('success'),
+
+            Stat::make('هذا الأسبوع', number_format($completedWeek))
+                ->description('منذ بداية الأسبوع')
+                ->descriptionIcon('heroicon-m-calendar-days')
+                ->color('success'),
+
+            Stat::make('هذا الشهر', number_format($completedMonth))
+                ->description('منذ بداية الشهر')
+                ->descriptionIcon('heroicon-m-calendar')
+                ->color('success'),
+
+            Stat::make('إجمالي مكتمل', number_format($completedAll))
+                ->description($failedAll > 0
+                    ? number_format($failedAll).' فاشلة'
+                    : 'بدون حالات فشل')
+                ->descriptionIcon('heroicon-m-trophy')
+                ->color('success'),
         ];
     }
 }

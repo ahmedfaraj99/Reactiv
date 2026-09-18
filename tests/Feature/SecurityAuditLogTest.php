@@ -70,7 +70,7 @@ class SecurityAuditLogTest extends TestCase
         $tenant = $this->makeTenant();
         $this->makeUser($tenant, UserRole::TenantOwner);
 
-        foreach ([AlertType::AssignmentOverdue, AlertType::HighVolume, AlertType::RepeatReveal, AlertType::TotpLimit, AlertType::OffHours] as $type) {
+        foreach ([AlertType::AssignmentOverdue, AlertType::HighVolume, AlertType::RepeatReveal, AlertType::TotpLimit] as $type) {
             Alert::create([
                 'tenant_id' => $tenant->id,
                 'type'      => $type,

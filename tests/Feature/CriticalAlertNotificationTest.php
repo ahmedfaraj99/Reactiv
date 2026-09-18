@@ -89,9 +89,9 @@ class CriticalAlertNotificationTest extends TestCase
 
         Alert::create([
             'tenant_id' => $tenant->id,
-            'type'      => AlertType::OffHours,
+            'type'      => AlertType::RepeatReveal,
             'severity'  => 'medium',
-            'message'   => 'نشاط خارج ساعات العمل',
+            'message'   => 'كشف متكرر',
         ]);
 
         $this->assertSame(0, $owner->notifications()->count());

@@ -72,6 +72,15 @@ class Activation extends Page
     public ?string $totpCodeEa = null;
     public int $totpSecondsLeft = 0;
 
+    /**
+     * Unix timestamp of the last successful TOTP generation. The visible
+     * code lives for `config('fc27ac.totp_display_seconds')` from this
+     * moment, independent of the 30-second TOTP window — PSN/EA verifiers
+     * accept a ±1 window skew (~60s total span), so the code shown stays
+     * valid on the console the whole time. Null when no code is visible.
+     */
+    public ?int $totpGeneratedAt = null;
+
     public static function canAccess(): bool
     {
         return auth()->user()?->isEmployee() ?? false;
@@ -152,6 +161,22 @@ class Activation extends Page
 
         $this->assignment = $assignment->loadMissing('account');
 
+        // The account row is gone (owner force-deleted it after this row
+        // was assigned). Sending the employee to a page whose entire body
+        // reads $assignment->account->... would 500 — bounce back with a
+        // clear notice instead. The assignment row itself survives so the
+        // employee's completion history stays intact.
+        if ($this->assignment->account === null) {
+            Notification::make()
+                ->warning()
+                ->title('هذا الحساب لم يعد موجوداً')
+                ->body('تم حذفه من قِبل المالك — تواصل مع مشرفك إذا كنت وسط تفعيل.')
+                ->send();
+
+            $this->redirect(MyAccounts::getUrl(), navigate: true);
+            return;
+        }
+
         // Once the employee has submitted proof (awaiting_review) or the
         // supervisor accepted it (completed), there is nothing more for
         // them to do here. Keeping them on this page just leaves the
@@ -204,7 +229,7 @@ class Activation extends Page
             return;
         }
 
-        if ($this->guardWorkingHours() && $this->guardRateLimit('reveal_credentials')) {
+        if ($this->guardRateLimit('reveal_credentials')) {
             $account = $this->assignment->account;
 
             $this->revealedPsnEmail    = $account->email;
@@ -230,8 +255,6 @@ class Activation extends Page
             if ($this->assignment->credentials_revealed_at === null) {
                 $this->assignment->update(['credentials_revealed_at' => now()]);
             }
-        } else {
-            $this->credentialsBlockedByWorkHours = true;
         }
     }
 
@@ -294,7 +317,6 @@ class Activation extends Page
             ->disabled(fn (): bool => $this->isLocked() || $this->hasPendingTotpApproval('psn'))
             ->action(function (TotpService $totp): void {
                 if (! $this->guardSensitiveAction()
-                    || ! $this->guardWorkingHours()
                     || ! $this->guardRateLimit('generate_totp_psn')) {
                     return;
                 }
@@ -322,7 +344,8 @@ class Activation extends Page
                 $result = $totp->currentCode($account->psn_totp_seed);
 
                 $this->totpCodePsn = $result['code'];
-                $this->totpSecondsLeft = $result['remaining'];
+                $this->totpGeneratedAt = now()->timestamp;
+                $this->totpSecondsLeft = (int) config('fc27ac.totp_display_seconds');
 
                 $this->logAction('generate_totp_psn', $account);
 
@@ -346,7 +369,6 @@ class Activation extends Page
             ->disabled(fn (): bool => $this->isLocked() || $this->hasPendingTotpApproval('ea'))
             ->action(function (TotpService $totp): void {
                 if (! $this->guardSensitiveAction()
-                    || ! $this->guardWorkingHours()
                     || ! $this->guardRateLimit('generate_totp_ea')) {
                     return;
                 }
@@ -370,7 +392,8 @@ class Activation extends Page
                 $result = $totp->currentCode($account->ea_totp_seed);
 
                 $this->totpCodeEa = $result['code'];
-                $this->totpSecondsLeft = $result['remaining'];
+                $this->totpGeneratedAt = now()->timestamp;
+                $this->totpSecondsLeft = (int) config('fc27ac.totp_display_seconds');
 
                 $this->logAction('generate_totp_ea', $account);
 
@@ -382,11 +405,10 @@ class Activation extends Page
 
     /**
      * 1s tick wired by wire:poll while any code is on screen. Recomputes
-     * the current TOTP window (same code within the 30s window, or clears
-     * the code when it rolls over) and the seconds-remaining number so the
-     * countdown display and progress bar stay in sync with actual server
-     * time — no client-side timer that can drift or be tampered with.
-     * Bounded: only ≤30 hits per generated code, no polling at rest.
+     * the seconds remaining until the code auto-hides — no client-side
+     * timer that can drift or be tampered with. Bounded: only a handful
+     * of hits per generated code (totp_display_seconds), no polling at
+     * rest.
      */
     public function tickTotp(TotpService $totp): void
     {
@@ -429,7 +451,7 @@ class Activation extends Page
             ->modalHeading('طلب Backup Codes')
             ->modalDescription('يُرسَل طلب للمشرف/المدير لتقييم ما إذا كنت تحتاج أكواد الاحتياط لتجاوز مشكلة TOTP. لن تظهر الأكواد إلا بعد الموافقة.')
             ->action(function (): void {
-                if (! $this->guardSensitiveAction() || ! $this->guardWorkingHours()) {
+                if (! $this->guardSensitiveAction()) {
                     return;
                 }
 
@@ -479,13 +501,10 @@ class Activation extends Page
             return;
         }
 
-        // Same gates that hide the primary credentials must also hide the
+        // Same gate that hides the primary credentials must also hide the
         // codes — otherwise a page that stayed open across a freeze
-        // boundary would leak backup codes on the next poll tick. Use the
-        // silent predicate (not the notifying guard) so a page kept open
-        // past work_end_hour doesn't stack a "خارج ساعات العمل" toast
-        // every 4 seconds.
-        if ($fresh->tenant->isFrozen() || ! self::withinWorkingHours()) {
+        // boundary would leak backup codes on the next poll tick.
+        if ($fresh->tenant->isFrozen()) {
             return;
         }
 
@@ -516,15 +535,21 @@ class Activation extends Page
     }
 
     /**
-     * Server-side re-read of the code shown on the page during its 30s
-     * validity window. Recomputes from the SAME seed (no counter bump,
-     * no reveal_log entry) — the value the employee spent an allowance
-     * on stays authoritative until the window rolls over. The moment
-     * the window closes, the code is CLEARED (not silently rolled to a
-     * fresh one): one generation = one 30s window, so the employee has
-     * to press the button again — and consume another allowance — to
-     * see a new code. Silently rolling forever would defeat the whole
-     * rate-limit.
+     * Countdown the visible code from `totp_display_seconds` down to 0,
+     * anchored to the server timestamp captured at generation. The code
+     * itself stays put on screen the whole lifetime — no window rollover
+     * clearing, no auto-refresh to the next window. PSN/EA verifiers
+     * accept a ±1 window skew (~60s span), so the generated value is
+     * accepted on the console for the whole visible lifetime regardless
+     * of where in the 30s TOTP window the press landed.
+     *
+     * When the lifetime elapses the code is cleared (not rolled to a
+     * fresh one): one generation = one visible window, so the employee
+     * has to press again — and consume another allowance — to see a
+     * new code. Silently rolling forever would defeat the rate-limit.
+     *
+     * @param  TotpService  $totp  kept for BC — not used, but the poll
+     *                             target signature is Livewire-visible.
      */
     public function refreshTotpDisplay(TotpService $totp): void
     {
@@ -532,31 +557,22 @@ class Activation extends Page
             return;
         }
 
-        $account = $this->assignment->account;
-        $remaining = 30;
-
-        if ($this->totpCodePsn !== null) {
-            $result = $totp->currentCode($account->psn_totp_seed);
-            if ($result['code'] !== $this->totpCodePsn) {
-                // Window rolled over — original code is no longer valid.
-                $this->totpCodePsn = null;
-            } else {
-                $remaining = $result['remaining'];
-            }
+        // Missing timestamp = the property was hydrated from an earlier
+        // deploy that didn't track it. Treat "now" as the generation
+        // moment so the code doesn't disappear on the next tick.
+        if ($this->totpGeneratedAt === null) {
+            $this->totpGeneratedAt = now()->timestamp;
         }
 
-        if ($this->totpCodeEa !== null) {
-            $result = $totp->currentCode($account->ea_totp_seed);
-            if ($result['code'] !== $this->totpCodeEa) {
-                $this->totpCodeEa = null;
-            } else {
-                $remaining = $result['remaining'];
-            }
-        }
+        $lifetime = (int) config('fc27ac.totp_display_seconds');
+        $elapsed  = now()->timestamp - $this->totpGeneratedAt;
+        $this->totpSecondsLeft = max(0, $lifetime - $elapsed);
 
-        $this->totpSecondsLeft = $this->totpCodePsn === null && $this->totpCodeEa === null
-            ? 0
-            : $remaining;
+        if ($this->totpSecondsLeft === 0) {
+            $this->totpCodePsn = null;
+            $this->totpCodeEa = null;
+            $this->totpGeneratedAt = null;
+        }
     }
 
     /**
@@ -817,48 +833,6 @@ class Activation extends Page
                 Notification::make()->warning()->title('سُجِّل الفشل — '.$labels)->send();
                 $this->redirect(MyAccounts::getUrl());
             });
-    }
-
-    /**
-     * When strict enforcement is on and the current time is outside
-     * configured working hours, refuse the sensitive action.
-     */
-    protected function guardWorkingHours(): bool
-    {
-        if (self::withinWorkingHours()) {
-            return true;
-        }
-
-        $start = (int) config('fc27ac.work_start_hour');
-        $end   = (int) config('fc27ac.work_end_hour');
-
-        Notification::make()
-            ->danger()
-            ->title('خارج ساعات العمل')
-            ->body("العمليات الحساسة مسموحة فقط بين {$start}:00 و {$end}:00")
-            ->send();
-
-        return false;
-    }
-
-    /**
-     * Silent predicate — the same window guardWorkingHours enforces, but
-     * without the user-visible notification. Poll targets (which fire on
-     * their own schedule) must consume this instead of the guard, so a
-     * page that lingers past work_end_hour doesn't stack a "خارج ساعات
-     * العمل" toast every few seconds.
-     */
-    public static function withinWorkingHours(): bool
-    {
-        if (! config('fc27ac.enforce_work_hours')) {
-            return true;
-        }
-
-        $hour  = (int) now()->format('G');
-        $start = (int) config('fc27ac.work_start_hour');
-        $end   = (int) config('fc27ac.work_end_hour');
-
-        return $hour >= $start && $hour < $end;
     }
 
     /**

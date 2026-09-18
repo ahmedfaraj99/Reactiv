@@ -15,17 +15,12 @@ use App\Enums\AlertType;
  */
 class AlertEngine
 {
-    /** Working hours enforced (24h clock, tenant-local time is assumed). */
-    private const WORK_START = 8;
-    private const WORK_END   = 22;
-
     /** More than this many reveals in an hour by a single user → high_volume. */
     private const HIGH_VOLUME_PER_HOUR = 40;
 
     public function evaluate(RevealLog $log): void
     {
         $this->repeatRevealRule($log);
-        $this->offHoursRule($log);
         $this->highVolumeRule($log);
     }
 
@@ -59,31 +54,6 @@ class AlertEngine
             'severity'   => 'high',
             'message'    => "الموظف كشف بيانات نفس الحساب {$count} مرات اليوم",
             'payload'    => ['count' => $count],
-        ]);
-    }
-
-    /**
-     * Any sensitive action outside configured working hours.
-     */
-    private function offHoursRule(RevealLog $log): void
-    {
-        if (! in_array($log->action, ['reveal_credentials', 'generate_totp_psn', 'generate_totp_ea'], true)) {
-            return;
-        }
-
-        $hour = (int) $log->created_at->format('G');
-        if ($hour >= self::WORK_START && $hour < self::WORK_END) {
-            return;
-        }
-
-        Alert::create([
-            'tenant_id'  => $log->tenant_id,
-            'user_id'    => $log->user_id,
-            'account_id' => $log->account_id,
-            'type'       => AlertType::OffHours,
-            'severity'   => 'medium',
-            'message'    => "نشاط خارج ساعات العمل الرسمية ({$hour}:00)",
-            'payload'    => ['hour' => $hour],
         ]);
     }
 

@@ -8,7 +8,6 @@ enum AlertType: string
 {
     case RepeatReveal        = 'repeat_reveal';
     case NewDevice           = 'new_device';
-    case OffHours            = 'off_hours';
     case HighVolume          = 'high_volume';
     case TotpLimit           = 'totp_limit';
     case BackupCodesReveal   = 'backup_codes_reveal';
@@ -25,7 +24,6 @@ enum AlertType: string
         return match ($this) {
             self::RepeatReveal        => 'كشف متكرر',
             self::NewDevice           => 'جهاز جديد',
-            self::OffHours            => 'خارج ساعات العمل',
             self::HighVolume          => 'حجم غير طبيعي',
             self::TotpLimit           => 'طلب كود إضافي',
             self::BackupCodesReveal   => 'طلب Backup Codes',

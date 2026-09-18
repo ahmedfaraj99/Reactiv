@@ -12,22 +12,21 @@ use Livewire\Livewire;
 use Tests\TestCase;
 
 /**
- * Activation::refreshTotpDisplay silently rolls the *visible* code
- * forward when the 30-second window ends, so the one paid-for
- * generation stays useful across as many windows as the employee needs
- * to type it in. The rule: same seed, same allowance count, no new
- * reveal_log row. Only callable when a code is already displayed —
- * otherwise it would leak a code the employee hadn't paid for.
+ * Activation::refreshTotpDisplay keeps the *visible* code stable for
+ * a fixed lifetime from generation (totp_display_seconds), independent
+ * of the 30s TOTP window — PSN/EA verifiers accept ±1 window skew so
+ * the value remains usable on the console the whole time. The rule:
+ * same code stays put until the lifetime elapses, same allowance
+ * count, no new reveal_log row. Only callable when a code is already
+ * displayed — otherwise it would leak a code the employee hadn't paid
+ * for.
  */
 class TotpRefreshDisplayTest extends TestCase
 {
-    public function test_refresh_recomputes_the_visible_code_without_bumping_the_allowance_counter(): void
+    public function test_refresh_keeps_the_visible_code_and_counts_down_without_bumping_the_allowance(): void
     {
-        // Lock time so the TOTP window doesn't roll over between the
-        // pre-mount code seed and refreshTotpDisplay's re-compute.
-        // Without this the test flakes ~1 second in 30 whenever it
-        // straddles a 30s boundary and refreshTotpDisplay correctly
-        // clears the (now-stale) code.
+        // Anchor time so we can advance it by a known amount and check
+        // the countdown lands exactly where we expect.
         \Illuminate\Support\Carbon::setTestNow('2026-09-03 12:00:15');
 
         $tenant = $this->makeTenant();
@@ -41,25 +40,53 @@ class TotpRefreshDisplayTest extends TestCase
 
         $this->actingAsTenantUser($employee);
 
-        // Seed the CURRENT code — refreshTotpDisplay compares against
-        // the generated value and clears the property when it doesn't
-        // match (that's the "one generation = one 30s window" rule).
-        // A hard-coded '123456' would fail that compare and mask the
-        // real behavior we want to verify.
-        $currentPsn = app(\App\Services\TotpService::class)->currentCode($account->psn_totp_seed)['code'];
-
+        // Seed a code and its generation timestamp — refreshTotpDisplay
+        // counts elapsed seconds from that anchor. The literal value
+        // stays on screen; the compare against the current TOTP window
+        // that older revisions did no longer applies.
         $component = Livewire::test(Activation::class, ['assignment' => $assignment])
-            ->set('totpCodePsn', $currentPsn)
-            ->set('totpSecondsLeft', 0)
-            ->call('refreshTotpDisplay');
+            ->set('totpCodePsn', '123456')
+            ->set('totpGeneratedAt', now()->timestamp)
+            ->set('totpSecondsLeft', (int) config('fc27ac.totp_display_seconds'));
 
-        $this->assertNotNull($component->get('totpCodePsn'));
-        $this->assertNotEmpty($component->get('totpCodePsn'));
-        $this->assertGreaterThan(0, $component->get('totpSecondsLeft'));
+        // Advance 10s and re-tick — same code, lifetime - 10 remaining.
+        \Illuminate\Support\Carbon::setTestNow('2026-09-03 12:00:25');
+        $component->call('refreshTotpDisplay');
+
+        $this->assertSame('123456', $component->get('totpCodePsn'));
+        $lifetime = (int) config('fc27ac.totp_display_seconds');
+        $this->assertSame($lifetime - 10, $component->get('totpSecondsLeft'));
         // The counter that enforces the 1-per-activation limit stays exactly
-        // where it was — refresh is just "let me see the current window",
+        // where it was — refresh is just "let me see the code I paid for",
         // not "give me another generation".
         $this->assertSame(1, $assignment->fresh()->psn_totp_generations);
+    }
+
+    public function test_refresh_clears_the_code_after_the_display_lifetime_elapses(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow('2026-09-03 12:00:00');
+
+        $tenant = $this->makeTenant();
+        $office = $this->makeOffice($tenant);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $office);
+        $account = $this->makeAccount($tenant);
+        $assignment = $this->makeAssignment($tenant, $account, $employee, [
+            'status' => AccountAssignment::STATUS_IN_PROGRESS,
+        ]);
+
+        $this->actingAsTenantUser($employee);
+
+        $component = Livewire::test(Activation::class, ['assignment' => $assignment])
+            ->set('totpCodePsn', '123456')
+            ->set('totpGeneratedAt', now()->timestamp);
+
+        // Fast-forward past the display lifetime — code disappears.
+        $lifetime = (int) config('fc27ac.totp_display_seconds');
+        \Illuminate\Support\Carbon::setTestNow(now()->addSeconds($lifetime + 1));
+        $component->call('refreshTotpDisplay');
+
+        $this->assertNull($component->get('totpCodePsn'));
+        $this->assertSame(0, $component->get('totpSecondsLeft'));
     }
 
     public function test_refresh_writes_no_reveal_log_entry(): void

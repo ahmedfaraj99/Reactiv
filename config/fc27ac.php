@@ -8,16 +8,15 @@ declare(strict_types=1);
  */
 return [
 
-    // Working hours (24h clock).
-    'work_start_hour' => (int) env('FC27AC_WORK_START', 8),
-    'work_end_hour'   => (int) env('FC27AC_WORK_END', 22),
-
-    // When true, sensitive actions (reveal/totp) are BLOCKED outside
-    // working hours. When false (default), they only fire an alert.
-    'enforce_work_hours' => (bool) env('FC27AC_ENFORCE_WORK_HOURS', false),
-
     // Seconds the credentials stay visible before auto-hiding.
     'credentials_reveal_seconds' => (int) env('FC27AC_REVEAL_SECONDS', 30),
+
+    // Seconds a generated TOTP code stays visible after the employee
+    // presses "generate". Kept below the ±1 window (~60s) that PSN/EA
+    // TOTP verifiers accept, so the code shown remains usable on the
+    // console for its whole visible lifetime regardless of where in
+    // the 30s TOTP window the press landed. See TotpService.
+    'totp_display_seconds' => (int) env('FC27AC_TOTP_DISPLAY_SECONDS', 45),
 
     // Idle session lifetime in minutes (mirrors SESSION_LIFETIME).
     'session_idle_minutes' => (int) env('SESSION_LIFETIME', 15),

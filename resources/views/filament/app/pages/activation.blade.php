@@ -499,7 +499,7 @@
                                 <p class="select-all text-center font-mono text-3xl font-bold tracking-widest text-blue-900 dark:text-blue-100">{{ $totpCodePsn }}</p>
                                 <p class="text-center text-xs text-gray-500 dark:text-gray-400">صالح لمدة <span data-totp-countdown>{{ $totpSecondsLeft }}</span> ث</p>
                                 <div class="h-1.5 overflow-hidden rounded-full bg-blue-200/70 dark:bg-blue-500/20">
-                                    <div class="h-full bg-blue-500 transition-[width] duration-1000 ease-linear dark:bg-blue-400" data-totp-progress style="width: {{ min(100, max(0, (int) round(($totpSecondsLeft / 30) * 100))) }}%"></div>
+                                    <div class="h-full bg-blue-500 transition-[width] duration-1000 ease-linear dark:bg-blue-400" data-totp-progress style="width: {{ min(100, max(0, (int) round(($totpSecondsLeft / (int) config('fc27ac.totp_display_seconds')) * 100))) }}%"></div>
                                 </div>
                             @elseif ($this->hasPendingTotpApproval('psn'))
                                 <p class="text-center text-xs font-semibold text-amber-600 dark:text-amber-400">بانتظار موافقة المشرف</p>
@@ -523,7 +523,7 @@
                                 <p class="select-all text-center font-mono text-3xl font-bold tracking-widest text-orange-900 dark:text-orange-100">{{ $totpCodeEa }}</p>
                                 <p class="text-center text-xs text-gray-500 dark:text-gray-400">صالح لمدة <span data-totp-countdown>{{ $totpSecondsLeft }}</span> ث</p>
                                 <div class="h-1.5 overflow-hidden rounded-full bg-orange-200/70 dark:bg-orange-500/20">
-                                    <div class="h-full bg-orange-500 transition-[width] duration-1000 ease-linear dark:bg-orange-400" data-totp-progress style="width: {{ min(100, max(0, (int) round(($totpSecondsLeft / 30) * 100))) }}%"></div>
+                                    <div class="h-full bg-orange-500 transition-[width] duration-1000 ease-linear dark:bg-orange-400" data-totp-progress style="width: {{ min(100, max(0, (int) round(($totpSecondsLeft / (int) config('fc27ac.totp_display_seconds')) * 100))) }}%"></div>
                                 </div>
                             @elseif ($this->hasPendingTotpApproval('ea'))
                                 <p class="text-center text-xs font-semibold text-amber-600 dark:text-amber-400">بانتظار موافقة المشرف</p>
