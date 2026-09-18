@@ -848,7 +848,7 @@ class AccountResource extends Resource
                         ->label('تصدير الأخطاء للعميل وحذفها')
                         ->icon('heroicon-o-arrow-up-tray')
                         ->color('danger')
-                        ->visible(fn (): bool => auth()->user()?->isManager() ?? false)
+                        ->visible(fn (): bool => (auth()->user()?->isManager() ?? false) || (auth()->user()?->isTenantOwner() ?? false))
                         ->requiresConfirmation()
                         ->modalDescription('يُصدَّر ملف Excel بنفس صيغة الاستيراد ليصحّحه العميل، ثم تُحذف الحسابات المُصدَّرة نهائياً من النظام (بما فيها سجل الكشف الخاص بها). لا يمكن التراجع.')
                         ->action(function (Collection $records) {
