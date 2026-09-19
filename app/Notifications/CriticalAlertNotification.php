@@ -27,17 +27,15 @@ class CriticalAlertNotification extends Notification implements ShouldQueue
     use Queueable;
 
     /**
-     * Types that justify paging the owner by email. Anything else stays
-     * in the bell only — otherwise the owner's inbox fills with routine
-     * operational noise (TOTP requests, overdue chases, rate-limit trips,
-     * off-hours notes) and the mail channel loses its signal value.
+     * Types that justify paging the owner by email. Kept intentionally
+     * short — only genuinely urgent, act-now events. Everything else
+     * (SuspiciousSpeed, DuplicateProof, NewDevice, TOTP requests, overdue
+     * chases, rate-limit trips) still fires the in-app bell but stays
+     * out of the inbox so the mail channel keeps its signal value.
      */
     private const MAIL_TYPES = [
         AlertType::LoginAttack,
         AlertType::EmergencyFreeze,
-        AlertType::SuspiciousSpeed,
-        AlertType::DuplicateProof,
-        AlertType::NewDevice,
     ];
 
     public function __construct(private readonly Alert $alert)

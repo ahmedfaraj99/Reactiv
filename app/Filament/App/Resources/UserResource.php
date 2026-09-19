@@ -373,6 +373,27 @@ class UserResource extends Resource
                                 ->send();
                         }
                     }),
+                Tables\Actions\Action::make('copy_activation_link')
+                    ->label('نسخ رابط التفعيل')
+                    ->icon('heroicon-o-link')
+                    ->color('gray')
+                    ->visible(fn (User $record): bool => $record->email_verified_at === null)
+                    ->modalHeading('رابط تفعيل الحساب')
+                    ->modalDescription('انسخ الرابط وأرسله للمستخدم عبر واتساب/تلجرام. صالح 72 ساعة.')
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel('إغلاق')
+                    ->form(fn (User $record): array => [
+                        Forms\Components\TextInput::make('activation_url')
+                            ->label('رابط التفعيل')
+                            ->default(\Illuminate\Support\Facades\URL::temporarySignedRoute(
+                                'activation.show',
+                                now()->addHours(72),
+                                ['user' => $record->getKey()],
+                            ))
+                            ->readOnly()
+                            ->extraInputAttributes(['dir' => 'ltr', 'onclick' => 'this.select()'])
+                            ->helperText('اضغط على الحقل لتحديد كامل الرابط ثم انسخه.'),
+                    ]),
                 Tables\Actions\Action::make('reset_2fa')
                     ->label('إعادة تعيين 2FA')
                     ->icon('heroicon-o-shield-exclamation')
