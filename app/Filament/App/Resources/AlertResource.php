@@ -55,7 +55,17 @@ class AlertResource extends Resource
 
     public static function getNavigationBadge(): ?string
     {
-        $count = static::getEloquentQuery()->where('resolved', false)->count();
+        $u = auth()->user();
+        if ($u === null) {
+            return null;
+        }
+
+        $count = \Illuminate\Support\Facades\Cache::remember(
+            "nav_badge:alerts:{$u->id}",
+            30,
+            fn () => static::getEloquentQuery()->where('resolved', false)->count(),
+        );
+
         return $count > 0 ? (string) $count : null;
     }
 

@@ -38,31 +38,46 @@ class OverviewStatsWidget extends BaseWidget
             return [];
         }
 
-        $inScopeEmployeeIds = $this->inScopeEmployeeIds($u);
-        $accounts = $this->scopedAccountsQuery($u, $tenantId);
+        // Cache the six aggregate counts per user for 60s. The dashboard is the
+        // most-visited page and this widget alone runs 7 queries; freshness
+        // within a minute is more than enough for an overview panel.
+        $counts = \Illuminate\Support\Facades\Cache::remember(
+            "overview_stats:{$tenantId}:{$u->id}",
+            60,
+            function () use ($u, $tenantId) {
+                $inScopeEmployeeIds = $this->inScopeEmployeeIds($u);
+                $accounts = $this->scopedAccountsQuery($u, $tenantId);
 
-        $available = (clone $accounts)->where('accounts.status', 'available')->count();
-        $assigned  = (clone $accounts)->where('accounts.status', 'assigned')->count();
-        $activated = (clone $accounts)->where('accounts.status', 'activated')->count();
+                return [
+                    'available'       => (clone $accounts)->where('accounts.status', 'available')->count(),
+                    'assigned'        => (clone $accounts)->where('accounts.status', 'assigned')->count(),
+                    'activated'       => (clone $accounts)->where('accounts.status', 'activated')->count(),
+                    'awaitingReview'  => AccountAssignment::query()
+                        ->where('tenant_id', $tenantId)
+                        ->where('status', AccountAssignment::STATUS_AWAITING_REVIEW)
+                        ->when($inScopeEmployeeIds !== null, fn ($q) => $q->whereIn('employee_id', $inScopeEmployeeIds))
+                        ->count(),
+                    'unresolvedAlerts' => Alert::query()
+                        ->where('tenant_id', $tenantId)
+                        ->where('resolved', false)
+                        ->when($inScopeEmployeeIds !== null, fn ($q) => $q->whereIn('user_id', $inScopeEmployeeIds))
+                        ->count(),
+                    'employees' => User::query()
+                        ->where('tenant_id', $tenantId)
+                        ->where('active', true)
+                        ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Employee->value))
+                        ->when($inScopeEmployeeIds !== null, fn ($q) => $q->whereIn('id', $inScopeEmployeeIds))
+                        ->count(),
+                ];
+            },
+        );
 
-        $awaitingReview = AccountAssignment::query()
-            ->where('tenant_id', $tenantId)
-            ->where('status', AccountAssignment::STATUS_AWAITING_REVIEW)
-            ->when($inScopeEmployeeIds !== null, fn ($q) => $q->whereIn('employee_id', $inScopeEmployeeIds))
-            ->count();
-
-        $unresolvedAlerts = Alert::query()
-            ->where('tenant_id', $tenantId)
-            ->where('resolved', false)
-            ->when($inScopeEmployeeIds !== null, fn ($q) => $q->whereIn('user_id', $inScopeEmployeeIds))
-            ->count();
-
-        $employees = User::query()
-            ->where('tenant_id', $tenantId)
-            ->where('active', true)
-            ->whereHas('roles', fn ($q) => $q->where('name', UserRole::Employee->value))
-            ->when($inScopeEmployeeIds !== null, fn ($q) => $q->whereIn('id', $inScopeEmployeeIds))
-            ->count();
+        $available       = $counts['available'];
+        $assigned        = $counts['assigned'];
+        $activated       = $counts['activated'];
+        $awaitingReview  = $counts['awaitingReview'];
+        $unresolvedAlerts = $counts['unresolvedAlerts'];
+        $employees       = $counts['employees'];
 
         return [
             Stat::make('حسابات متاحة', number_format($available))

@@ -78,9 +78,18 @@ class AssignmentReviewResource extends Resource
 
     public static function getNavigationBadge(): ?string
     {
-        $count = static::getEloquentQuery()
-            ->where('status', AccountAssignment::STATUS_AWAITING_REVIEW)
-            ->count();
+        $u = auth()->user();
+        if ($u === null) {
+            return null;
+        }
+
+        $count = \Illuminate\Support\Facades\Cache::remember(
+            "nav_badge:assignment_review:{$u->id}",
+            30,
+            fn () => static::getEloquentQuery()
+                ->where('status', AccountAssignment::STATUS_AWAITING_REVIEW)
+                ->count(),
+        );
 
         return $count > 0 ? (string) $count : null;
     }
