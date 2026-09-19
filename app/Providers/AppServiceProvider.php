@@ -24,14 +24,6 @@ class AppServiceProvider extends ServiceProvider
         }
 
         // Restrict access to /pulse dashboard to tenant owners only.
-        Gate::define('viewPulse', function (User $user) {
-            \Log::info('viewPulse check', [
-                'user_id'       => $user->id,
-                'email'         => $user->email,
-                'roles'         => $user->roles->pluck('name')->all(),
-                'isTenantOwner' => $user->isTenantOwner(),
-            ]);
-            return $user->isTenantOwner();
-        });
+        Gate::define('viewPulse', fn (User $user) => $user->isTenantOwner());
     }
 }
