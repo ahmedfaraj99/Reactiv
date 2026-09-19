@@ -35,6 +35,11 @@ class EmployeePerformanceLeaderboardWidget extends BaseWidget
     {
         return $table
             ->heading('الأعلى أداءً')
+            // The manager's dashboard used to block on this widget's
+            // aggregate query. Deferred loading lets the page paint
+            // first and the leaderboard fills in via a separate Livewire
+            // request, so switching to /app feels instant.
+            ->deferLoading()
             ->query($this->leaderboardQuery())
             ->columns([
                 TextColumn::make('employee.name')

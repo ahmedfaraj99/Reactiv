@@ -42,6 +42,9 @@ class LiveActivationsWidget extends BaseWidget
     {
         return $table
             ->heading('التفعيلات الجارية الآن')
+            // Manager dashboards load faster when this table paints after
+            // the page is interactive rather than blocking initial render.
+            ->deferLoading()
             ->query($this->liveQuery())
             ->columns([
                 TextColumn::make('employee.name')

@@ -1006,6 +1006,12 @@ class AccountResource extends Resource
                 ]),
             ])
             ->defaultSort('created_at', 'desc')
+            // Row-level decryption of the email columns makes the initial
+            // render dominate perceived load time for managers with lots
+            // of rows. Deferring lets the page shell paint first and the
+            // table body arrive via a follow-up Livewire request, so
+            // navigation to /accounts feels instant.
+            ->deferLoading()
             // Live progress for the manager/supervisor watching activation
             // happen in real time — the tab badges (available/failed/
             // awaiting review/completed) and the rows both refresh on
