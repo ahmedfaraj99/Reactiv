@@ -4,19 +4,21 @@ declare(strict_types=1);
 
 namespace App\Http\Middleware;
 
-use App\Models\Alert;
 use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
-use App\Enums\AlertType;
 
 /**
  * On every authenticated request, capture the client-provided fingerprint
- * cookie. First seen fingerprint is bound to the user. Any later request
- * from a different fingerprint fires a new_device alert. This is a
- * deterrent, not a lock — a determined user can clear cookies. Combined
- * with reveal_logs it makes device sharing obvious after the fact.
+ * cookie and keep the user's currently-seen fingerprint fresh so it stays
+ * available on downstream reveal_logs for audit correlation.
+ *
+ * NewDevice alerts were removed after they proved to be mostly false
+ * positives: `fc_fp` mixes in `navigator.userAgent` and screen size, so
+ * Chrome auto-updates and monitor changes silently rotate the fingerprint
+ * and paged the owner on every legitimate re-login. The fingerprint is
+ * still recorded — it just no longer raises an alert on rotation.
  */
 class BindDeviceFingerprint
 {
@@ -33,36 +35,16 @@ class BindDeviceFingerprint
         // Never store the raw client-supplied value. HMAC with the app key
         // so the DB column can't be lifted and replayed against a different
         // install, and so an attacker inspecting the DB can't sanity-check
-        // what they'd need to spoof. The cookie itself is still forgeable
-        // (that's inherent to a client-side fingerprint) but at least the
-        // server-side representation is bound to this deployment.
+        // what they'd need to spoof.
         $fp = hash_hmac('sha256', $rawFp, config('app.key'));
 
-        // First fingerprint ever → bind silently
-        if (empty($user->device_fingerprint)) {
+        // Silently keep device_fingerprint current. First bind, and every
+        // subsequent rotation, is a no-op UX-wise but keeps downstream
+        // audit rows (reveal_logs.device_fingerprint) pointing at whatever
+        // the user actually looks like right now.
+        if ($user->device_fingerprint !== $fp) {
             $user->forceFill(['device_fingerprint' => $fp])->save();
-            return $next($request);
         }
-
-        if ($user->device_fingerprint === $fp) {
-            return $next($request);
-        }
-
-        // Mismatch → raise an alert per unseen fingerprint. Repeated hits
-        // from the same new device bump the existing OPEN alert (no fresh
-        // mail); a genuinely different fingerprint opens a new one.
-        Alert::raise([
-            'tenant_id' => $user->tenant_id,
-            'user_id'   => $user->id,
-            'type'      => AlertType::NewDevice,
-            'severity'  => 'high',
-            'message'   => 'تسجيل دخول من جهاز مختلف عن المسجَّل سابقاً',
-            'payload'   => [
-                'expected_fp' => substr($user->device_fingerprint, 0, 12).'…',
-                'seen_fp'     => substr($fp, 0, 12).'…',
-                'ip'          => $request->ip(),
-            ],
-        ], dedupKey: "new_device:{$user->id}:".substr($fp, 0, 16));
 
         return $next($request);
     }
