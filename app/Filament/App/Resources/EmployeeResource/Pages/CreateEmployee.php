@@ -14,6 +14,7 @@ use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Illuminate\Validation\UnauthorizedException;
 use Illuminate\Validation\ValidationException;
@@ -61,18 +62,25 @@ class CreateEmployee extends CreateRecord
 
         Cache::forget(AccountResource::employeeOptionsCacheKey((int) $u->id));
 
+        $activationUrl = URL::temporarySignedRoute(
+            'activation.show',
+            now()->addHours(72),
+            ['user' => $employee->getKey()],
+        );
+
         try {
             $employee->notify(new UserActivationInvitation);
             Notification::make()
                 ->title('تم إنشاء الموظف')
-                ->body('تم إرسال رابط تفعيل إلى '.$employee->email.'. صالح 72 ساعة.')
+                ->body('تم إرسال رابط تفعيل إلى '.$employee->email.'. أو انسخ الرابط من هنا وأرسله عبر واتساب: '.$activationUrl)
                 ->success()
+                ->persistent()
                 ->send();
         } catch (\Throwable $e) {
             \Log::error('Employee activation email failed', ['user_id' => $employee->id, 'error' => $e->getMessage()]);
             Notification::make()
-                ->title('تم إنشاء الموظف لكن الإيميل لم يُرسل')
-                ->body('استخدم زر "إعادة إرسال دعوة" من صفحة الموظفين.')
+                ->title('تم إنشاء الموظف — الإيميل لم يُرسل')
+                ->body('انسخ رابط التفعيل التالي وأرسله للموظف عبر واتساب/تلجرام (صالح 72 ساعة): '.$activationUrl)
                 ->warning()
                 ->persistent()
                 ->send();
