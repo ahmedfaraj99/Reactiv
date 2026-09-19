@@ -1009,8 +1009,11 @@ class AccountResource extends Resource
             // Live progress for the manager/supervisor watching activation
             // happen in real time — the tab badges (available/failed/
             // awaiting review/completed) and the rows both refresh on
-            // their own instead of needing a manual page reload.
-            ->poll('10s');
+            // their own instead of needing a manual page reload. 30s is
+            // still fast enough to feel live for the supervisor use case
+            // and cuts the polling load to a third versus 10s, which was
+            // pinning the server whenever multiple people watched at once.
+            ->poll('30s');
     }
 
     public static function getPages(): array
