@@ -71,6 +71,12 @@ class EmployeePerformanceLeaderboardWidget extends BaseWidget
                         : '—'),
             ])
             ->defaultSort('completed_count', 'desc')
+            // Fixed top-10 board — the query already hard-caps at 10 rows.
+            // Leaving Filament's pagination on lets a user pick "All", which
+            // strips our limit via forPage() and re-runs the heavy grouped
+            // FILTER aggregates unbounded, timing out into a 500 on large
+            // tenants.
+            ->paginated(false)
             ->emptyStateHeading('لا توجد تفعيلات مكتملة أو فاشلة بعد');
     }
 
