@@ -1302,7 +1302,7 @@ class AccountResource extends Resource
         $csv->insertOne([
             'email', 'psn_password', 'psn_totp_secret',
             'ea_email', 'ea_password', 'ea_totp_secret',
-            'ea_backup_code_1', 'ea_backup_code_2', 'سبب_الخطأ',
+            'ea_backup_code_1', 'ea_backup_code_2', 'سبب_الخطأ', 'العميل',
         ]);
 
         foreach ($accounts as $account) {
@@ -1316,6 +1316,7 @@ class AccountResource extends Resource
                 $account->ea_backup_code_1 ?? '',
                 $account->ea_backup_code_2 ?? '',
                 $account->assignment?->notes ?? '',
+                $account->client?->name ?? '',
             ]);
         }
 
