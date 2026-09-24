@@ -450,7 +450,8 @@ class DailyPerformance extends Page implements HasForms, HasTable
             ])
             // Worst first: lowest share of target on top, no-target rows last.
             ->defaultSort('progress', 'asc')
-            ->paginated([25, 50, 100])
+            ->paginated([10, 25, 50, 100])
+            ->defaultPaginationPageOption(10)
             ->emptyStateHeading('لا يوجد موظفون نشطون ضمن نطاقك')
             ->emptyStateIcon('heroicon-o-users');
     }
