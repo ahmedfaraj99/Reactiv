@@ -319,53 +319,6 @@ class DailyPerformance extends Page implements HasForms, HasTable
         return $counts;
     }
 
-    /**
-     * Employees worth flagging at the top of the page: nothing done at all,
-     * or below target and already missed most of the previous week.
-     *
-     * @return Collection<int,array{name:string, reason:string, severity:string}>
-     */
-    public function warnings(): Collection
-    {
-        $misses = $this->missedDays();
-        $threshold = (int) ceil(self::HISTORY_DAYS / 2);
-
-        return $this->rows()
-            ->map(function (User $row) use ($misses, $threshold): ?array {
-                $status = self::statusFor($row);
-                if (! in_array($status, ['idle', 'behind'], true)) {
-                    return null;
-                }
-
-                $missed = $misses[$row->id] ?? 0;
-                $done = (int) $row->done_count;
-                $target = (int) $row->effective_target;
-                $repeat = $missed >= $threshold;
-
-                if ($status === 'behind' && ! $repeat) {
-                    return null;
-                }
-
-                $reason = $status === 'idle'
-                    ? 'لم يُنجز أي تفعيل '.($this->isToday() ? 'اليوم' : 'في هذا اليوم')
-                    : "أنجز {$done} من {$target}";
-
-                if ($repeat) {
-                    $reason .= " — وتحت الهدف {$missed} من آخر ".self::HISTORY_DAYS.' أيام';
-                }
-
-                return [
-                    'name'     => $row->name,
-                    'office'   => $row->office?->name,
-                    'reason'   => $reason,
-                    'severity' => $repeat ? 'danger' : 'warning',
-                ];
-            })
-            ->filter()
-            ->sortBy(fn (array $w): int => $w['severity'] === 'danger' ? 0 : 1)
-            ->values();
-    }
-
     // ── Table ────────────────────────────────────────────────────────
 
     public function table(Table $table): Table

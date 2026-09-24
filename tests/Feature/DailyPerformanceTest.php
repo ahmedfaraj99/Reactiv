@@ -140,8 +140,6 @@ class DailyPerformanceTest extends TestCase
         $page = $this->page();
 
         $this->assertSame(5, $page->missedDays()[$employee->id]);
-        $this->assertCount(1, $page->warnings());
-        $this->assertSame('danger', $page->warnings()->first()['severity']);
     }
 
     public function test_new_employee_is_not_charged_for_days_before_they_joined(): void

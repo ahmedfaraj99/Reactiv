@@ -1,7 +1,6 @@
 <x-filament-panels::page>
     @php
         $summary = $this->summary();
-        $warnings = $this->warnings();
         $cards = [
             ['label' => 'الموظفون', 'value' => $summary['total'], 'class' => 'text-gray-950 dark:text-white'],
             ['label' => 'حققوا الهدف', 'value' => $summary['met'], 'class' => 'text-success-600 dark:text-success-400'],
@@ -46,32 +45,6 @@
     @if ($summary['total'] > 0 && $summary['no_target'] === $summary['total'])
         <div class="rounded-2xl bg-warning-50 p-4 text-sm text-warning-700 ring-1 ring-warning-600/20 dark:bg-warning-400/10 dark:text-warning-400">
             لم يُحدَّد هدف يومي بعد — حدّد الهدف الافتراضي أعلاه (أو هدفاً خاصاً لكل موظف) لتظهر التحذيرات.
-        </div>
-    @endif
-
-    @if ($warnings->isNotEmpty())
-        <div class="rounded-2xl bg-danger-50 p-6 ring-1 ring-danger-600/20 dark:bg-danger-400/10 dark:ring-danger-400/30">
-            <div class="mb-3 flex items-center gap-2 text-base font-bold text-danger-700 dark:text-danger-400">
-                <x-filament::icon icon="heroicon-o-exclamation-triangle" class="h-5 w-5" />
-                تحذيرات الأداء ({{ $warnings->count() }})
-            </div>
-            <ul class="space-y-2">
-                @foreach ($warnings as $w)
-                    <li class="flex flex-wrap items-center gap-2 text-sm">
-                        <x-filament::badge :color="$w['severity']">
-                            {{ $w['severity'] === 'danger' ? 'متكرر' : 'اليوم' }}
-                        </x-filament::badge>
-                        <span class="font-semibold text-gray-950 dark:text-white">{{ $w['name'] }}</span>
-                        @if ($w['office'])
-                            <span class="text-gray-500 dark:text-gray-400">({{ $w['office'] }})</span>
-                        @endif
-                        <span class="text-gray-700 dark:text-gray-300">— {{ $w['reason'] }}</span>
-                    </li>
-                @endforeach
-            </ul>
-            @if ($this->isToday())
-                <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">اليوم لم ينتهِ بعد — الأرقام تتحدث مع كل تفعيل.</p>
-            @endif
         </div>
     @endif
 
