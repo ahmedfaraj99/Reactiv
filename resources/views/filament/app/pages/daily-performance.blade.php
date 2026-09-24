@@ -18,7 +18,7 @@
                 <input
                     type="date"
                     wire:model.live="date"
-                    max="{{ now()->toDateString() }}"
+                    max="{{ now(\App\Filament\App\Pages\DailyPerformance::timezone())->toDateString() }}"
                     class="block rounded-lg border-none bg-white py-1.5 text-base text-gray-950 shadow-sm ring-1 ring-gray-950/10 focus:ring-2 focus:ring-primary-600 dark:bg-white/5 dark:text-white dark:ring-white/20"
                 />
                 <x-filament::icon-button icon="heroicon-m-chevron-left" wire:click="nextDay" label="اليوم التالي" :disabled="$this->isToday()" />

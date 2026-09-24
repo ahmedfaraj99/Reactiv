@@ -34,10 +34,15 @@ class DailyPerformanceTest extends TestCase
         return $page->rows()->keyBy('id');
     }
 
+    private function localToday(): string
+    {
+        return now(DailyPerformance::timezone())->toDateString();
+    }
+
     private function page(?string $date = null): DailyPerformance
     {
         $page = new DailyPerformance();
-        $page->date = $date ?? now()->toDateString();
+        $page->date = $date ?? $this->localToday();
 
         return $page;
     }
@@ -83,7 +88,7 @@ class DailyPerformanceTest extends TestCase
         $this->actingAsTenantUser($owner);
 
         $this->assertSame(0, (int) $this->rows($this->page())[$employee->id]->done_count);
-        $this->assertSame(1, (int) $this->rows($this->page(now()->subDay()->toDateString()))[$employee->id]->done_count);
+        $this->assertSame(1, (int) $this->rows($this->page(now(DailyPerformance::timezone())->subDay()->toDateString()))[$employee->id]->done_count);
     }
 
     public function test_awaiting_review_can_reach_target_only_pending_approval(): void
@@ -156,8 +161,32 @@ class DailyPerformanceTest extends TestCase
 
     public function test_future_or_garbage_date_falls_back_to_today(): void
     {
-        $this->assertSame(now()->toDateString(), $this->page(now()->addDays(3)->toDateString())->day()->toDateString());
-        $this->assertSame(now()->toDateString(), $this->page('not-a-date')->day()->toDateString());
+        $this->assertSame($this->localToday(), $this->page(now()->addDays(3)->toDateString())->day()->toDateString());
+        $this->assertSame($this->localToday(), $this->page('not-a-date')->day()->toDateString());
+    }
+
+    public function test_day_rolls_over_at_local_midnight_not_utc(): void
+    {
+        // 23:30 UTC on the 24th = 01:30 on the 25th in Tripoli (UTC+2).
+        $this->travelTo(\Carbon\Carbon::parse('2026-09-24 23:30:00', 'UTC'));
+
+        $tenant = $this->makeTenant(['default_daily_target' => 1]);
+        $owner = $this->makeUser($tenant, UserRole::TenantOwner);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $this->makeOffice($tenant));
+
+        // Submitted 23:10 UTC = 01:10 local on the 25th.
+        $this->complete($tenant, $employee, [
+            'submitted_at' => now()->subMinutes(20),
+            'completed_at' => now()->subMinutes(20),
+        ]);
+
+        $this->actingAsTenantUser($owner);
+
+        $page = new DailyPerformance();
+        $page->mount();
+
+        $this->assertSame('2026-09-25', $page->date);
+        $this->assertSame(1, (int) $page->rows()->first()->done_count);
     }
 
     public function test_supervisor_can_view_but_not_change_targets(): void

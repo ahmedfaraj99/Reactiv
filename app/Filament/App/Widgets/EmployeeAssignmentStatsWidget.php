@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\App\Widgets;
 
+use App\Filament\App\Pages\DailyPerformance;
 use App\Models\AccountAssignment;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
@@ -68,7 +69,10 @@ class EmployeeAssignmentStatsWidget extends BaseWidget
         // the employee sees here is the one they're measured on.
         $completedToday = AccountAssignment::query()
             ->where('employee_id', $userId)
-            ->doneBetween($now->copy()->startOfDay(), $now->copy()->startOfDay()->addDay())
+            ->doneBetween(
+                $localToday = now(DailyPerformance::timezone())->startOfDay()->utc(),
+                $localToday->copy()->addDay(),
+            )
             ->count();
         $target = auth()->user()->effectiveDailyTarget();
         $completedWeek  = (clone $completedBase)->where('completed_at', '>=', $now->copy()->startOfWeek())->count();

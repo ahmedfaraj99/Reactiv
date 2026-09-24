@@ -72,6 +72,14 @@ return [
     'timezone' => 'UTC',
 
     /*
+    | Where the business actually operates. Timestamps stay stored in UTC
+    | (the 'timezone' above); this is only used to decide where a working
+    | "day" starts and ends — e.g. the daily activation target — so that
+    | midnight in Libya rolls the day over, not midnight UTC (02:00 local).
+    */
+    'business_timezone' => env('BUSINESS_TIMEZONE', 'Africa/Tripoli'),
+
+    /*
     |--------------------------------------------------------------------------
     | Application Locale Configuration
     |--------------------------------------------------------------------------

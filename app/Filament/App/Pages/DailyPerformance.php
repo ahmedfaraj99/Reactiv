@@ -71,6 +71,12 @@ class DailyPerformance extends Page implements HasForms, HasTable
         return $u !== null && ($u->isTenantOwnerOrManager() || $u->isSupervisor());
     }
 
+    /** Timezone whose midnight starts a new working day (see config/app.php). */
+    public static function timezone(): string
+    {
+        return (string) config('app.business_timezone', config('app.timezone'));
+    }
+
     public static function canEditTargets(): bool
     {
         return auth()->user()?->isTenantOwnerOrManager() ?? false;
@@ -83,7 +89,7 @@ class DailyPerformance extends Page implements HasForms, HasTable
 
     public function mount(): void
     {
-        $this->date = now()->toDateString();
+        $this->date = CarbonImmutable::now(self::timezone())->toDateString();
 
         $this->form->fill([
             'default_daily_target' => filament()->getTenant()->default_daily_target,
@@ -111,15 +117,16 @@ class DailyPerformance extends Page implements HasForms, HasTable
     }
 
     /**
-     * The selected day, clamped to [anything past, today]. Future days
-     * have nothing to show and would make every employee look idle.
+     * The selected day as local midnight in the business timezone,
+     * clamped to [anything past, today]. Future days have nothing to show
+     * and would make every employee look idle.
      */
     public function day(): CarbonImmutable
     {
-        $today = CarbonImmutable::today();
+        $today = CarbonImmutable::today(self::timezone());
 
         try {
-            $day = CarbonImmutable::createFromFormat('!Y-m-d', $this->date);
+            $day = CarbonImmutable::createFromFormat('!Y-m-d', $this->date, self::timezone());
         } catch (\Throwable) {
             $day = false;
         }
@@ -135,7 +142,7 @@ class DailyPerformance extends Page implements HasForms, HasTable
 
     public function isToday(): bool
     {
-        return $this->day()->isToday();
+        return $this->day()->equalTo(CarbonImmutable::today(self::timezone()));
     }
 
     public function form(Form $form): Form
@@ -189,8 +196,9 @@ class DailyPerformance extends Page implements HasForms, HasTable
             return User::query()->whereRaw('1 = 0');
         }
 
-        $from = $this->day()->startOfDay();
-        $to = $from->addDay();
+        // Local day boundaries, converted to UTC to match stored timestamps.
+        $from = $this->day()->utc();
+        $to = $this->day()->addDay()->utc();
         $default = $tenant->default_daily_target;
 
         $countFor = fn (\Closure $scope) => AccountAssignment::query()
@@ -258,12 +266,14 @@ class DailyPerformance extends Page implements HasForms, HasTable
             return $this->missesCache = [];
         }
 
-        $to = $this->day()->startOfDay();
-        $from = $to->subDays(self::HISTORY_DAYS);
+        $localTo = $this->day();
+        $to = $localTo->utc();
+        $from = $localTo->subDays(self::HISTORY_DAYS)->utc();
 
         $perDay = AccountAssignment::query()
             ->selectRaw('employee_id')
-            ->selectRaw('DATE(COALESCE(submitted_at, completed_at)) as day')
+            // Stored UTC → local calendar day.
+            ->selectRaw("DATE((COALESCE(submitted_at, completed_at) AT TIME ZONE 'UTC') AT TIME ZONE ?) as day", [self::timezone()])
             ->selectRaw('COUNT(*) as n')
             ->where('tenant_id', filament()->getTenant()->id)
             ->whereIn('employee_id', $rows->pluck('id'))
@@ -279,7 +289,8 @@ class DailyPerformance extends Page implements HasForms, HasTable
             $metDays = $days->filter(fn ($d): bool => (int) $d->n >= $target)->count();
 
             // Don't count days before the employee existed.
-            $window = min(self::HISTORY_DAYS, max(0, (int) $row->created_at?->startOfDay()->diffInDays($to)));
+            $joined = $row->created_at?->copy()->setTimezone(self::timezone())->startOfDay();
+            $window = min(self::HISTORY_DAYS, max(0, (int) $joined?->diffInDays($localTo)));
 
             $misses[$row->id] = max(0, $window - $metDays);
         }
