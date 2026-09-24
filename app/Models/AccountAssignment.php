@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -93,6 +94,24 @@ class AccountAssignment extends Model
             return false;
         }
         return $seconds < 30 + ($matchesRequired * 90);
+    }
+
+    /**
+     * Completed activations credited to the day the employee actually did
+     * the work (proof submitted), not the day the supervisor got around to
+     * approving it — otherwise a late review would count against the
+     * employee's daily quota. Rows without a submission (legacy / direct
+     * completion) fall back to completed_at.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeDoneBetween(Builder $query, \DateTimeInterface $from, \DateTimeInterface $to): Builder
+    {
+        return $query
+            ->where('account_assignments.status', self::STATUS_COMPLETED)
+            ->whereRaw('COALESCE(account_assignments.submitted_at, account_assignments.completed_at) >= ?', [$from])
+            ->whereRaw('COALESCE(account_assignments.submitted_at, account_assignments.completed_at) < ?', [$to]);
     }
 
     public function tenant(): BelongsTo

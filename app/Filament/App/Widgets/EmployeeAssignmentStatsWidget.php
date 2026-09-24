@@ -63,7 +63,14 @@ class EmployeeAssignmentStatsWidget extends BaseWidget
             ->where('employee_id', $userId)
             ->where('status', AccountAssignment::STATUS_COMPLETED);
 
-        $completedToday = (clone $completedBase)->whereDate('completed_at', $now->toDateString())->count();
+        // "Today" is credited by submission day, same rule the supervisors'
+        // DailyPerformance page judges the daily target by — so the number
+        // the employee sees here is the one they're measured on.
+        $completedToday = AccountAssignment::query()
+            ->where('employee_id', $userId)
+            ->doneBetween($now->copy()->startOfDay(), $now->copy()->startOfDay()->addDay())
+            ->count();
+        $target = auth()->user()->effectiveDailyTarget();
         $completedWeek  = (clone $completedBase)->where('completed_at', '>=', $now->copy()->startOfWeek())->count();
         $completedMonth = (clone $completedBase)->where('completed_at', '>=', $now->copy()->startOfMonth())->count();
         $completedAll   = (clone $completedBase)->count();
@@ -94,10 +101,16 @@ class EmployeeAssignmentStatsWidget extends BaseWidget
                 ->descriptionIcon('heroicon-m-clock')
                 ->color($urgent > 0 ? 'danger' : 'gray'),
 
-            Stat::make('أكملت اليوم', number_format($completedToday))
-                ->description('حسابات وافق عليها المشرف اليوم')
-                ->descriptionIcon('heroicon-m-check-badge')
-                ->color('success'),
+            Stat::make('أكملت اليوم', $target !== null
+                    ? number_format($completedToday).' / '.number_format($target)
+                    : number_format($completedToday))
+                ->description(match (true) {
+                    $target === null            => 'حسابات وافق عليها المشرف اليوم',
+                    $completedToday >= $target  => 'حققت هدفك اليومي',
+                    default                     => 'باقي '.number_format($target - $completedToday).' لتحقيق هدفك اليومي',
+                })
+                ->descriptionIcon($target !== null && $completedToday < $target ? 'heroicon-m-exclamation-triangle' : 'heroicon-m-check-badge')
+                ->color($target !== null && $completedToday < $target ? 'warning' : 'success'),
 
             Stat::make('هذا الأسبوع', number_format($completedWeek))
                 ->description('منذ بداية الأسبوع')

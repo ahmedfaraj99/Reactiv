@@ -34,6 +34,7 @@ use Spatie\Permission\Traits\HasRoles;
  * @property ?string     $device_fingerprint
  * @property ?string     $last_login_ip
  * @property bool        $active
+ * @property ?int        $daily_target
  */
 #[ObservedBy([UserObserver::class])]
 class User extends Authenticatable implements FilamentUser, HasTenants
@@ -49,7 +50,7 @@ class User extends Authenticatable implements FilamentUser, HasTenants
         'name', 'email', 'email_verified_at', 'phone', 'password',
         'google2fa_secret', 'google2fa_enabled',
         'device_fingerprint', 'last_login_ip', 'last_login_at', 'active',
-        'requires_proof',
+        'requires_proof', 'daily_target',
     ];
 
     protected $hidden = ['password', 'remember_token', 'google2fa_secret'];
@@ -71,6 +72,7 @@ class User extends Authenticatable implements FilamentUser, HasTenants
             'google2fa_enabled'  => 'boolean',
             'active'             => 'boolean',
             'requires_proof'     => 'boolean',
+            'daily_target'       => 'integer',
         ];
     }
 
@@ -169,6 +171,16 @@ class User extends Authenticatable implements FilamentUser, HasTenants
         }
 
         return collect();
+    }
+
+    /**
+     * The daily activation quota this employee is judged against: their
+     * own override if one was set, otherwise the tenant-wide default.
+     * Null = no target configured at all.
+     */
+    public function effectiveDailyTarget(): ?int
+    {
+        return $this->daily_target ?? $this->tenant?->default_daily_target;
     }
 
     // ── Filament panel access ────────────────────────────────────────

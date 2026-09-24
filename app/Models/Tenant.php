@@ -24,6 +24,7 @@ use Illuminate\Support\Str;
  * @property int    $max_accounts
  * @property int    $max_employees
  * @property ?float $commission_per_activation
+ * @property ?int   $default_daily_target
  * @property ?\Illuminate\Support\Carbon $frozen_at
  * @property ?string $frozen_reason
  * @property ?int   $frozen_by
@@ -36,7 +37,7 @@ class Tenant extends Model implements HasName
     protected $fillable = [
         'name', 'slug', 'subdomain', 'encryption_key_id',
         'status', 'plan', 'max_accounts', 'max_employees', 'trial_ends_at',
-        'commission_per_activation',
+        'commission_per_activation', 'default_daily_target',
         'frozen_at', 'frozen_reason', 'frozen_by',
     ];
 
@@ -47,6 +48,7 @@ class Tenant extends Model implements HasName
             'max_employees'              => 'integer',
             'trial_ends_at'              => 'datetime',
             'commission_per_activation'  => 'decimal:2',
+            'default_daily_target'       => 'integer',
             'frozen_at'                  => 'datetime',
         ];
     }
