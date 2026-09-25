@@ -321,6 +321,15 @@ class MyAccounts extends Page implements HasTable
                     ->icon('heroicon-m-chat-bubble-left-ellipsis')
                     ->toggleable(),
 
+                Tables\Columns\TextColumn::make('employee_notes')
+                    ->label('ملاحظاتي')
+                    ->placeholder('—')
+                    ->limit(40)
+                    ->tooltip(fn (AccountAssignment $record): ?string => $record->employee_notes)
+                    ->icon('heroicon-m-pencil-square')
+                    ->color('warning')
+                    ->toggleable(),
+
                 Tables\Columns\TextColumn::make('assigned_at')
                     ->label('مُنذ')
                     ->since()
@@ -339,6 +348,30 @@ class MyAccounts extends Page implements HasTable
                 ]);
             })
             ->actions([
+                // Employees often run several consoles at once; a quick
+                // note per account ("PS5 #2 — played 1 match") keeps them
+                // from losing track. Editable even on locked rows since it
+                // touches nothing but the employee's own note.
+                Tables\Actions\Action::make('employeeNotes')
+                    ->label('ملاحظة')
+                    ->icon('heroicon-m-pencil-square')
+                    ->color('gray')
+                    ->modalHeading(fn (AccountAssignment $record): string => 'ملاحظاتي على حساب #'.$record->account_id)
+                    ->modalSubmitActionLabel('حفظ')
+                    ->fillForm(fn (AccountAssignment $record): array => ['employee_notes' => $record->employee_notes])
+                    ->form([
+                        \Filament\Forms\Components\Textarea::make('employee_notes')
+                            ->label('ملاحظة')
+                            ->placeholder('مثال: على جهاز رقم 2 — لعبت مباراة واحدة')
+                            ->rows(3)
+                            ->maxLength(1000),
+                    ])
+                    ->action(function (AccountAssignment $record, array $data): void {
+                        $note = trim((string) ($data['employee_notes'] ?? ''));
+                        $record->update(['employee_notes' => $note !== '' ? $note : null]);
+                    })
+                    ->successNotificationTitle('حُفظت الملاحظة'),
+
                 Tables\Actions\Action::make('open')
                     ->label(fn (AccountAssignment $record): string => $this->isRowLocked($record->id)
                         ? 'مقفل — أكمل حساباً مفتوحاً أولاً'

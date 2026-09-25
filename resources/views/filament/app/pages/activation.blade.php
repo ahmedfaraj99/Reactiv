@@ -559,6 +559,22 @@
                     @endif
                 </div>
 
+                {{-- Employee's own note — which console, how far they got. --}}
+                <div class="flex flex-wrap items-start justify-between gap-3 rounded-2xl bg-warning-50 p-4 ring-1 ring-warning-600/20 dark:bg-warning-500/10 dark:ring-warning-400/20">
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2 text-sm font-bold text-warning-800 dark:text-warning-300">
+                            <x-heroicon-o-pencil-square class="h-4 w-4" />
+                            ملاحظاتي
+                        </div>
+                        @if (filled($this->assignment->employee_notes))
+                            <p class="mt-1 whitespace-pre-line break-words text-sm text-gray-800 dark:text-gray-200">{{ $this->assignment->employee_notes }}</p>
+                        @else
+                            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">اكتب على أي جهاز تشتغل على هذا الحساب حتى لا تتوه بين الأجهزة.</p>
+                        @endif
+                    </div>
+                    {{ $this->employeeNotesAction }}
+                </div>
+
                 {{-- Step 3: Complete --}}
                 <div class="space-y-4 rounded-2xl bg-white p-4 ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10 sm:p-6">
                     <div class="flex items-center gap-3">

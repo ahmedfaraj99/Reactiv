@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Storage;
 use Filament\Actions\Action;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Illuminate\Contracts\Support\Htmlable;
@@ -781,6 +782,36 @@ class Activation extends Page
                 'original_submitted_at'  => $original->submitted_at?->toIso8601String(),
             ],
         ]);
+    }
+
+    /**
+     * The employee's own note on this account, so they can tell which
+     * console/account is at which stage when working several at once.
+     * Not gated by isLocked() — it changes nothing but their own note.
+     */
+    public function employeeNotesAction(): Action
+    {
+        return Action::make('employeeNotes')
+            ->label(fn (): string => $this->assignment->employee_notes ? 'تعديل الملاحظة' : 'أضف ملاحظة')
+            ->icon('heroicon-o-pencil-square')
+            ->color('gray')
+            ->size('sm')
+            ->modalHeading('ملاحظاتي على هذا الحساب')
+            ->modalSubmitActionLabel('حفظ')
+            ->fillForm(fn (): array => ['employee_notes' => $this->assignment->employee_notes])
+            ->form([
+                Textarea::make('employee_notes')
+                    ->label('ملاحظة')
+                    ->placeholder('مثال: على جهاز رقم 2 — لعبت مباراة واحدة')
+                    ->rows(3)
+                    ->maxLength(1000),
+            ])
+            ->action(function (array $data): void {
+                $note = trim((string) ($data['employee_notes'] ?? ''));
+                $this->assignment->update(['employee_notes' => $note !== '' ? $note : null]);
+
+                Notification::make()->success()->title('حُفظت الملاحظة')->send();
+            });
     }
 
     /**

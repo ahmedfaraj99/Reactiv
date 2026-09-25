@@ -1268,6 +1268,7 @@ class AccountResource extends Resource
                         'started_at'              => null,
                         'completed_at'            => null,
                         'notes'                   => null,
+                        'employee_notes'          => null,
                         'proof_path'              => null,
                         'submitted_at'            => null,
                         'reviewed_by'             => null,

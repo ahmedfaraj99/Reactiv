@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property int     $employee_id
  * @property ?int    $supervisor_id
  * @property string  $status
+ * @property ?string $employee_notes
  * @property ?string $proof_path
  * @property ?int    $reviewed_by
  */
@@ -39,12 +40,12 @@ class AccountAssignment extends Model
      * the ones they've begun; at the cap they must finish or fail one
      * before opening another.
      */
-    public const MAX_CONCURRENT_ACTIVATIONS = 3;
+    public const MAX_CONCURRENT_ACTIVATIONS = 6;
 
     protected $fillable = [
         'tenant_id', 'account_id', 'employee_id', 'supervisor_id',
         'status', 'assigned_at', 'started_at', 'credentials_revealed_at', 'first_totp_at',
-        'completed_at', 'notes',
+        'completed_at', 'notes', 'employee_notes',
         'proof_path', 'proof_hash', 'submitted_at', 'reviewed_by', 'reviewed_at', 'rejection_reason',
         'psn_totp_generations', 'ea_totp_generations',
         'psn_totp_extra_allowed', 'ea_totp_extra_allowed',
