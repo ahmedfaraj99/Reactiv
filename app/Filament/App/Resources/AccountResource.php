@@ -418,7 +418,10 @@ class AccountResource extends Resource
                     ->color('warning')
                     ->visible(fn (Account $record): bool => auth()->user()?->isManager()
                         && (int) $record->manager_id === (int) auth()->id())
-                    ->modalHeading(fn (Account $record): string => 'بيانات الحساب #'.$record->id)
+                    // $record is null when the account vanished (deleted,
+                    // moved to another manager) while the modal was open —
+                    // the next poll re-renders the heading and would 500.
+                    ->modalHeading(fn (?Account $record): string => 'بيانات الحساب #'.($record?->id ?? ''))
                     ->modalSubmitAction(false)
                     ->modalCancelActionLabel('إغلاق')
                     // mountUsing runs ONCE when the modal opens; modalContent
@@ -427,7 +430,11 @@ class AccountResource extends Resource
                     // would insert a new RevealLog row on each poll. All
                     // gating + audit + rate limiting lives here; modalContent
                     // stays a pure view render.
-                    ->mountUsing(function (Account $record): void {
+                    ->mountUsing(function (?Account $record): void {
+                        if ($record === null) {
+                            throw new \Filament\Support\Exceptions\Halt();
+                        }
+
                         // Server-side re-assert of the visibility invariant
                         // — the button in the row is a stale client cache
                         // once the owner demotes a manager or reassigns
@@ -483,7 +490,11 @@ class AccountResource extends Resource
                             'created_at'         => now(),
                         ]);
                     })
-                    ->modalContent(function (Account $record): \Illuminate\Contracts\View\View {
+                    ->modalContent(function (?Account $record): ?\Illuminate\Contracts\View\View {
+                        if ($record === null) {
+                            return null;
+                        }
+
                         $totp = app(TotpService::class);
 
                         // Backup codes are intentionally NOT surfaced here —
@@ -521,11 +532,11 @@ class AccountResource extends Resource
                             ->rows(4)
                             ->maxLength(1000),
                     ])
-                    ->fillForm(fn (Account $record): array => [
-                        'notes' => $record->assignment?->notes,
+                    ->fillForm(fn (?Account $record): array => [
+                        'notes' => $record?->assignment?->notes,
                     ])
-                    ->action(function (Account $record, array $data): void {
-                        $record->assignment?->update(['notes' => $data['notes'] !== '' ? $data['notes'] : null]);
+                    ->action(function (?Account $record, array $data): void {
+                        $record?->assignment?->update(['notes' => $data['notes'] !== '' ? $data['notes'] : null]);
                         Notification::make()->success()->title('تم حفظ الملاحظة')->send();
                     }),
             ])
@@ -861,6 +872,10 @@ class AccountResource extends Resource
                                 return null;
                             }
 
+                            // client isn't in getEloquentQuery()'s eager
+                            // loads — without this the CSV's client column
+                            // fires one query per exported row.
+                            $failed->loadMissing('client');
                             $csv = self::buildFailedExportCsv($failed);
                             $actorId = auth()->id();
 
@@ -1006,6 +1021,12 @@ class AccountResource extends Resource
                 ]),
             ])
             ->defaultSort('created_at', 'desc')
+            // No 'all' option: Filament persists the per-page choice in the
+            // session, so one click on "all" left that user's page loading
+            // (and decrypting) every account on each 30s poll until it hung.
+            // Bulk actions still reach every row via "select all" across
+            // pages. Dropping 'all' also clears the stale session value.
+            ->paginated([10, 25, 50, 100])
             // Live progress for the manager/supervisor watching activation
             // happen in real time — the tab badges (available/failed/
             // awaiting review/completed) and the rows both refresh on
