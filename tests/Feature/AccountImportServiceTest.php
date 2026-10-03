@@ -51,6 +51,25 @@ class AccountImportServiceTest extends TestCase
         $this->assertSame(1, Account::where('tenant_id', $tenant->id)->count());
     }
 
+    public function test_activated_and_retired_accounts_do_not_count_toward_max_accounts(): void
+    {
+        $tenant = $this->makeTenant(['max_accounts' => 1]);
+        $uploader = $this->makeUser($tenant, UserRole::TenantOwner);
+        $manager = $this->makeUser($tenant, UserRole::Manager);
+
+        $this->makeAccount($tenant, ['email' => 'done@example.com', 'email_fingerprint' => Account::fingerprint('done@example.com'), 'status' => 'activated']);
+        $this->makeAccount($tenant, ['email' => 'old@example.com', 'email_fingerprint' => Account::fingerprint('old@example.com'), 'status' => 'retired']);
+
+        $csv = $this->csvFile([
+            ['new@example.com', 'Pw!1', 'JBSWY3DPEHPK3PXP', '', '', 'NB2W45DFOIZA4TZI', '', ''],
+        ]);
+
+        $result = (new AccountImportService())->import($csv, $tenant, $uploader, $manager);
+
+        $this->assertSame(1, $result['imported']);
+        $this->assertSame(0, $result['failed']);
+    }
+
     public function test_import_allows_rows_under_the_max_accounts_limit(): void
     {
         $tenant = $this->makeTenant(['max_accounts' => 5]);

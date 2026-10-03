@@ -75,8 +75,11 @@ class AccountImportService
         $rowIndex = 0;
 
         // Enforce the tenant's plan limit — tracked locally instead of a
-        // COUNT query per row.
-        $accountCount = Account::where('tenant_id', $tenant->id)->count();
+        // COUNT query per row. Only accounts still in play (available or
+        // assigned) count; activated and retired ones are history.
+        $accountCount = Account::where('tenant_id', $tenant->id)
+            ->whereIn('status', ['available', 'assigned'])
+            ->count();
         $maxAccounts = $tenant->max_accounts;
 
         foreach ($reader->getSheetIterator() as $sheet) {
