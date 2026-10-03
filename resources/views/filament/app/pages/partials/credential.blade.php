@@ -20,6 +20,7 @@
 <div class="fc-cred-row space-y-1.5">
     <code
         id="{{ $id }}"
+        dir="ltr"
         data-fc-cred
         class="fc-cred block w-full select-all break-all rounded-lg bg-white px-3 py-2 font-mono text-gray-950 ring-1 ring-inset ring-gray-200 dark:bg-white/5 dark:text-gray-100 dark:ring-white/10"
     >

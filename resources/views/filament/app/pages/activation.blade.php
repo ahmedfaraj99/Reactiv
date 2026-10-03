@@ -39,6 +39,11 @@
            Base size is deliberately larger than the surrounding UI; the
            zoom control multiplies from here. */
         .fc-cred { font-size: 1.125rem; line-height: 1.6; letter-spacing: 0.01em; }
+
+        /* Credentials are always left-to-right. The page is RTL, so without
+           this the bidi algorithm reorders the per-4 chunks of a password
+           that starts with digits (`100200Ss` showed as `00Ss 1002`). */
+        .fc-cred, .fc-bigscreen-value { direction: ltr; unicode-bidi: isolate; }
         [data-cred-size="lg"] .fc-cred { font-size: 1.5rem; }
         [data-cred-size="xl"] .fc-cred { font-size: 2rem; }
 
@@ -290,8 +295,8 @@
                                                  employee reads them once when TOTP is unusable and
                                                  the surrounding decoration only adds noise. --}}
                                             <div class="grid grid-cols-1 gap-2">
-                                                <code class="block w-full select-all rounded-lg bg-white px-3 py-2 font-mono text-gray-950 ring-1 ring-inset ring-gray-200 dark:bg-white/5 dark:text-gray-100 dark:ring-white/10">{{ $revealedEaBackupCode1 }}</code>
-                                                <code class="block w-full select-all rounded-lg bg-white px-3 py-2 font-mono text-gray-950 ring-1 ring-inset ring-gray-200 dark:bg-white/5 dark:text-gray-100 dark:ring-white/10">{{ $revealedEaBackupCode2 }}</code>
+                                                <code dir="ltr" class="block w-full select-all rounded-lg bg-white px-3 py-2 font-mono text-gray-950 ring-1 ring-inset ring-gray-200 dark:bg-white/5 dark:text-gray-100 dark:ring-white/10">{{ $revealedEaBackupCode1 }}</code>
+                                                <code dir="ltr" class="block w-full select-all rounded-lg bg-white px-3 py-2 font-mono text-gray-950 ring-1 ring-inset ring-gray-200 dark:bg-white/5 dark:text-gray-100 dark:ring-white/10">{{ $revealedEaBackupCode2 }}</code>
                                             </div>
                                         @else
                                             {{-- Poll every 4s ONLY while the request is pending —
