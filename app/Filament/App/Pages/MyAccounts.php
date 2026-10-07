@@ -198,7 +198,8 @@ class MyAccounts extends Page implements HasTable
      *
      * @return array{
      *   completed_count:int, avg_minutes:?float, team_avg_minutes:?float,
-     *   comparison_percent:?int, earnings:?string, currency_configured:bool
+     *   comparison_percent:?int, earnings:?string, currency_configured:bool,
+     *   match_count:int, activation_count:int
      * }
      */
     public function todayStats(): array
@@ -214,6 +215,9 @@ class MyAccounts extends Page implements HasTable
             ->whereDate('completed_at', $today);
 
         $count = (clone $completedToday)->count();
+        $matchCount = (clone $completedToday)
+            ->whereHas('account', fn (Builder $q) => $q->ofMatchesType('matches'))
+            ->count();
 
         // Personal average — only rows that have BOTH timestamps (rows
         // completed before the timing columns existed are simply ignored,
@@ -253,8 +257,9 @@ class MyAccounts extends Page implements HasTable
             $comparison = (int) round((($team - $mine) / $team) * 100);
         }
 
-        $rate = $tenant->commission_per_activation;
-        $earnings = $rate !== null ? number_format($count * (float) $rate, 2) : null;
+        // Each kind of account has its own flat rate — see Tenant::commissionFor().
+        $payout = $tenant->commissionFor($count - $matchCount, $matchCount);
+        $earnings = $payout !== null ? number_format($payout, 2) : null;
 
         return [
             'completed_count'     => $count,
@@ -262,7 +267,9 @@ class MyAccounts extends Page implements HasTable
             'team_avg_minutes'    => $team > 0 ? round($team, 1) : null,
             'comparison_percent'  => $comparison,
             'earnings'            => $earnings,
-            'currency_configured' => $rate !== null,
+            'currency_configured' => $payout !== null,
+            'match_count'         => $matchCount,
+            'activation_count'    => $count - $matchCount,
         ];
     }
 

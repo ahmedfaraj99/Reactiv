@@ -54,6 +54,62 @@ class CommissionsReportTest extends TestCase
         $this->assertSame(2, (int) $rows->first()->completed_count);
     }
 
+    public function test_counts_and_payout_split_by_account_kind(): void
+    {
+        $tenant = $this->makeTenant(['commission_per_activation' => 5, 'commission_per_match_account' => 12]);
+        $owner = $this->makeUser($tenant, UserRole::TenantOwner);
+        $office = $this->makeOffice($tenant);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $office);
+
+        foreach ([3, 3, 0] as $matches) {
+            $this->makeAssignment($tenant, $this->makeAccount($tenant, ['matches_required' => $matches]), $employee, [
+                'status'       => AccountAssignment::STATUS_COMPLETED,
+                'completed_at' => now(),
+            ]);
+        }
+
+        $this->actingAsTenantUser($owner);
+
+        $row = $this->rows(new CommissionsReport())->first();
+
+        $this->assertSame(3, (int) $row->completed_count);
+        $this->assertSame(2, (int) $row->matches_count);
+        $this->assertSame(1, (int) $row->activation_only_count);
+        // 2 × 12 + 1 × 5
+        $this->assertSame(29.0, $tenant->fresh()->commissionFor(1, 2));
+    }
+
+    public function test_blank_rate_counts_as_zero_and_no_rates_means_no_payout(): void
+    {
+        $onlyMatches = $this->makeTenant(['commission_per_match_account' => 10]);
+        $this->assertSame(20.0, $onlyMatches->commissionFor(3, 2));
+
+        $noRates = $this->makeTenant();
+        $this->assertNull($noRates->commissionFor(3, 2));
+    }
+
+    public function test_employee_today_earnings_use_both_rates(): void
+    {
+        $tenant = $this->makeTenant(['commission_per_activation' => 5, 'commission_per_match_account' => 12]);
+        $office = $this->makeOffice($tenant);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $office);
+
+        foreach ([3, 0, 0] as $matches) {
+            $this->makeAssignment($tenant, $this->makeAccount($tenant, ['matches_required' => $matches]), $employee, [
+                'status'       => AccountAssignment::STATUS_COMPLETED,
+                'completed_at' => now(),
+            ]);
+        }
+
+        $this->actingAsTenantUser($employee);
+
+        $stats = Livewire::test(\App\Filament\App\Pages\MyAccounts::class)->instance()->todayStats();
+
+        $this->assertSame('22.00', $stats['earnings']);
+        $this->assertSame(1, $stats['match_count']);
+        $this->assertSame(2, $stats['activation_count']);
+    }
+
     public function test_manager_only_sees_employees_in_offices_they_manage(): void
     {
         $tenant = $this->makeTenant();
@@ -97,9 +153,10 @@ class CommissionsReportTest extends TestCase
         $this->actingAsTenantUser($owner);
 
         Livewire::test(CommissionsReport::class)
-            ->fillForm(['commission_per_activation' => 7.5])
+            ->fillForm(['commission_per_activation' => 7.5, 'commission_per_match_account' => 15])
             ->callAction('saveRate');
 
         $this->assertSame('7.50', $tenant->fresh()->commission_per_activation);
+        $this->assertSame('15.00', $tenant->fresh()->commission_per_match_account);
     }
 }

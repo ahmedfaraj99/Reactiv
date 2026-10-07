@@ -8,6 +8,7 @@ use App\Enums\UserRole;
 use App\Models\AccountAssignment;
 use App\Models\User;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
@@ -23,7 +24,8 @@ use Illuminate\Database\Eloquent\Builder;
 
 /**
  * Per-employee payout estimate: completed activations in a date range
- * times the tenant's per-activation rate. The rate is currency-agnostic
+ * times the tenant's rates — one flat price for activation-only accounts
+ * and another for accounts with the play-N-matches add-on. The rate is currency-agnostic
  * and only the owner can set it — everyone else just reads the totals it
  * produces. A tenant that never set a rate still sees the completed
  * counts, just no money column, so this is useful from day one even
@@ -45,6 +47,9 @@ class CommissionsReport extends Page implements HasForms, HasTable
     /** @var array<string,mixed> */
     public ?array $data = [];
 
+    /** SQL: the assignment's account has the play-N-matches add-on. */
+    private const IS_MATCH_ACCOUNT = 'EXISTS (SELECT 1 FROM accounts WHERE accounts.id = account_assignments.account_id AND accounts.matches_required > 0)';
+
     public static function canAccess(): bool
     {
         $u = auth()->user();
@@ -58,21 +63,37 @@ class CommissionsReport extends Page implements HasForms, HasTable
 
     public function mount(): void
     {
+        $tenant = filament()->getTenant();
+
         $this->form->fill([
-            'commission_per_activation' => filament()->getTenant()->commission_per_activation,
+            'commission_per_match_account' => $tenant->commission_per_match_account,
+            'commission_per_activation'    => $tenant->commission_per_activation,
         ]);
     }
 
     public function form(Form $form): Form
     {
         return $form
+            ->columns(2)
             ->schema([
-                TextInput::make('commission_per_activation')
-                    ->label('قيمة التفعيل الواحد')
-                    ->helperText('تُترك فارغة لعرض عدد التفعيلات فقط بدون مبالغ.')
+                TextInput::make('commission_per_match_account')
+                    ->label('قيمة حساب بمباريات')
+                    ->prefixIcon('heroicon-m-trophy')
                     ->numeric()
                     ->minValue(0)
                     ->disabled(fn (): bool => ! (auth()->user()?->isTenantOwner() ?? false)),
+
+                TextInput::make('commission_per_activation')
+                    ->label('قيمة حساب تفعيل فقط')
+                    ->prefixIcon('heroicon-m-check-badge')
+                    ->numeric()
+                    ->minValue(0)
+                    ->disabled(fn (): bool => ! (auth()->user()?->isTenantOwner() ?? false)),
+
+                Placeholder::make('rates_hint')
+                    ->hiddenLabel()
+                    ->columnSpanFull()
+                    ->content('اترك الحقلين فارغين لعرض الأعداد فقط بدون مبالغ. الحقل الفارغ يُحسب صفراً.'),
             ])
             ->statePath('data');
     }
@@ -83,19 +104,21 @@ class CommissionsReport extends Page implements HasForms, HasTable
             ->label('حفظ')
             ->visible(fn (): bool => auth()->user()?->isTenantOwner() ?? false)
             ->action(function (): void {
-                $rate = $this->form->getState()['commission_per_activation'] ?? null;
+                $state = $this->form->getState();
+                $clean = fn (mixed $rate): mixed => $rate !== null && $rate !== '' ? $rate : null;
 
                 filament()->getTenant()->update([
-                    'commission_per_activation' => $rate !== null && $rate !== '' ? $rate : null,
+                    'commission_per_match_account' => $clean($state['commission_per_match_account'] ?? null),
+                    'commission_per_activation'    => $clean($state['commission_per_activation'] ?? null),
                 ]);
 
-                Notification::make()->success()->title('تم حفظ القيمة')->send();
+                Notification::make()->success()->title('تم حفظ الأسعار')->send();
             });
     }
 
     public function table(Table $table): Table
     {
-        $rate = filament()->getTenant()->commission_per_activation;
+        $tenant = filament()->getTenant();
 
         return $table
             ->query($this->commissionsQuery())
@@ -104,17 +127,32 @@ class CommissionsReport extends Page implements HasForms, HasTable
                     ->label('الموظف')
                     ->weight('bold'),
 
-                Tables\Columns\TextColumn::make('completed_count')
-                    ->label('تفعيلات مكتملة')
+                Tables\Columns\TextColumn::make('matches_count')
+                    ->label('بمباريات')
+                    ->badge()
+                    ->color('purple')
+                    ->icon('heroicon-m-trophy')
+                    ->sortable(),
+
+                Tables\Columns\TextColumn::make('activation_only_count')
+                    ->label('تفعيل فقط')
                     ->badge()
                     ->color('success')
+                    ->icon('heroicon-m-check-badge')
+                    ->sortable(),
+
+                Tables\Columns\TextColumn::make('completed_count')
+                    ->label('الإجمالي')
+                    ->badge()
+                    ->color('gray')
                     ->sortable(),
 
                 Tables\Columns\TextColumn::make('total')
                     ->label('المستحق')
-                    ->visible($rate !== null)
+                    ->weight('bold')
+                    ->visible($tenant->hasCommissionRates())
                     ->state(fn (AccountAssignment $record): string => number_format(
-                        ((float) $record->completed_count) * (float) $rate,
+                        $tenant->commissionFor((int) $record->activation_only_count, (int) $record->matches_count) ?? 0,
                         2,
                     )),
             ])
@@ -149,6 +187,9 @@ class CommissionsReport extends Page implements HasForms, HasTable
             ->selectRaw('employee_id')
             ->selectRaw('MIN(id) as id')
             ->selectRaw('COUNT(*) as completed_count')
+            // Split by the account's kind since each kind has its own rate.
+            ->selectRaw('COUNT(*) FILTER (WHERE '.self::IS_MATCH_ACCOUNT.') as matches_count')
+            ->selectRaw('COUNT(*) FILTER (WHERE NOT '.self::IS_MATCH_ACCOUNT.') as activation_only_count')
             ->where('status', AccountAssignment::STATUS_COMPLETED);
 
         if ($tenantId === null || $u === null) {

@@ -181,7 +181,7 @@
                 <div class="col-span-2 rounded-2xl bg-primary-50 p-4 ring-1 ring-primary-200 dark:bg-primary-500/10 dark:ring-primary-500/30 sm:col-span-2">
                     <p class="text-xs text-primary-700 dark:text-primary-300">مستحقك اليوم</p>
                     <p class="mt-1 font-mono text-2xl font-bold text-primary-900 dark:text-primary-100">{{ $stats['earnings'] }}</p>
-                    <p class="text-xs text-primary-700/70 dark:text-primary-300/70">{{ $stats['completed_count'] }} × قيمة التفعيل</p>
+                    <p class="text-xs text-primary-700/70 dark:text-primary-300/70">{{ $stats['match_count'] }} بمباريات · {{ $stats['activation_count'] }} تفعيل فقط</p>
                 </div>
             @endif
         </div>
