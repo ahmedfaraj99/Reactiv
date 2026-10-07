@@ -625,9 +625,12 @@ class Activation extends Page
             ->color('success')
             ->requiresConfirmation()
             ->modalHeading('إنهاء التفعيل')
-            ->modalDescription($requiresProof
-                ? 'رفع صورة الإثبات مطلوب لهذا التفعيل. التقط بكاميرا الموبايل لشاشة التلفزيون.'
-                : 'رفع صورة الإثبات اختياري — تقدر ترفعها لو حابب، أو تخلص من غير.')
+            ->modalDescription(($this->assignment->account->requiresMatches()
+                    ? "⚠️ هذا الحساب يتطلب لعب {$this->assignment->account->matches_required} مباريات — تأكد أنك لعبتها قبل الإنهاء. "
+                    : 'هذا الحساب تفعيل فقط — بدون مباريات. ')
+                .($requiresProof
+                    ? 'رفع صورة الإثبات مطلوب لهذا التفعيل. التقط بكاميرا الموبايل لشاشة التلفزيون.'
+                    : 'رفع صورة الإثبات اختياري — تقدر ترفعها لو حابب، أو تخلص من غير.'))
             ->disabled(fn (): bool => $this->isLocked())
             ->form([
                 FileUpload::make('proof_path')

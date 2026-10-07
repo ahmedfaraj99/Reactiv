@@ -170,6 +170,20 @@
                     </p>
                 </div>
             </div>
+        @else
+            {{-- Shown explicitly rather than relying on the purple banner's
+                 absence — with both kinds in the queue, "no banner" is too
+                 easy to miss and staff end up playing (or skipping) matches
+                 on the wrong account. --}}
+            <div class="mb-6 flex gap-3 rounded-2xl bg-emerald-50 p-4 ring-1 ring-emerald-200 dark:bg-emerald-500/10 dark:ring-emerald-500/30">
+                <x-heroicon-o-check-badge class="h-6 w-6 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <div>
+                    <p class="text-sm font-bold text-emerald-900 dark:text-emerald-300">تفعيل فقط — هذا الحساب لا يتطلب لعب مباريات</p>
+                    <p class="mt-1 text-sm text-emerald-800 dark:text-emerald-200">
+                        سجّل الدخول على الجهاز وأنهِ التفعيل مباشرة، بدون لعب أي مباراة.
+                    </p>
+                </div>
+            </div>
         @endif
 
         @if ($assignment->status === \App\Models\AccountAssignment::STATUS_IN_PROGRESS && $assignment->rejection_reason)
@@ -195,6 +209,15 @@
             <div class="min-w-0 flex-1">
                 <p class="truncate text-xs text-gray-500 dark:text-gray-400">حساب رقم</p>
                 <p class="font-mono text-lg font-bold text-gray-950 dark:text-white">#{{ $assignment->account->id }}</p>
+                @if ($assignment->account->requiresMatches())
+                    <span class="mt-1 inline-flex items-center gap-1 rounded-md bg-purple-100 px-2 py-0.5 text-xs font-bold text-purple-700 dark:bg-purple-500/20 dark:text-purple-300">
+                        <x-heroicon-m-trophy class="h-3.5 w-3.5" /> {{ $assignment->account->matches_required }} مباريات
+                    </span>
+                @else
+                    <span class="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+                        <x-heroicon-m-check-badge class="h-3.5 w-3.5" /> تفعيل فقط
+                    </span>
+                @endif
             </div>
             <div class="text-end">
                 <p class="text-xs text-gray-500 dark:text-gray-400">
@@ -642,6 +665,16 @@
                             <p class="text-xs text-gray-500 dark:text-gray-400">حساب رقم</p>
                             <p class="font-mono text-2xl font-bold text-gray-950 dark:text-white">#{{ $assignment->account->id }}</p>
                         </div>
+
+                        @if ($assignment->account->requiresMatches())
+                            <div class="flex items-center gap-2 rounded-xl bg-purple-50 px-3 py-2 text-sm font-bold text-purple-800 ring-1 ring-purple-200 dark:bg-purple-500/10 dark:text-purple-300 dark:ring-purple-500/30">
+                                <x-heroicon-m-trophy class="h-5 w-5" /> تفعيل + {{ $assignment->account->matches_required }} مباريات
+                            </div>
+                        @else
+                            <div class="flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800 ring-1 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/30">
+                                <x-heroicon-m-check-badge class="h-5 w-5" /> تفعيل فقط — بدون مباريات
+                            </div>
+                        @endif
 
                         <div class="grid grid-cols-2 gap-3 border-t border-gray-100 pt-4 dark:border-white/5">
                             <div>

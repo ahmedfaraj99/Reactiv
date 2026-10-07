@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -75,6 +76,19 @@ class Account extends Model
     public function requiresMatches(): bool
     {
         return $this->matches_required > 0;
+    }
+
+    /**
+     * Narrow to one kind of order: 'matches' (activation + N matches) or
+     * 'activation' (activation only). Anything else leaves the query as-is.
+     */
+    public function scopeOfMatchesType(Builder $query, ?string $type): Builder
+    {
+        return match ($type) {
+            'matches'    => $query->where('matches_required', '>', 0),
+            'activation' => $query->where('matches_required', 0),
+            default      => $query,
+        };
     }
 
     protected static function booted(): void

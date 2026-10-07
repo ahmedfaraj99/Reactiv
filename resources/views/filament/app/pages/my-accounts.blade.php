@@ -201,5 +201,9 @@
         </div>
     @endif
 
+    <div class="mb-4">
+        @include('filament.app.partials.matches-type-switch')
+    </div>
+
     {{ $this->table }}
 </x-filament-panels::page>

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\App\Pages;
 
 use App\Enums\UserRole;
+use App\Filament\App\Concerns\HasMatchesTypeSwitch;
 use App\Models\Account;
 use App\Models\AccountAssignment;
 use App\Models\User;
@@ -26,6 +27,7 @@ use Illuminate\Support\Facades\DB;
  */
 class MyAccounts extends Page implements HasTable
 {
+    use HasMatchesTypeSwitch;
     use InteractsWithTable;
 
     protected static ?string $navigationIcon = 'heroicon-o-inbox-stack';
@@ -264,20 +266,37 @@ class MyAccounts extends Page implements HasTable
         ];
     }
 
+    /** The employee's open queue, before the matches-type switch narrows it. */
+    protected function queueQuery(): Builder
+    {
+        return AccountAssignment::query()
+            ->where('employee_id', auth()->id())
+            ->where('tenant_id', filament()->getTenant()?->id)
+            ->whereIn('status', [
+                AccountAssignment::STATUS_PENDING,
+                AccountAssignment::STATUS_IN_PROGRESS,
+                AccountAssignment::STATUS_AWAITING_REVIEW,
+            ]);
+    }
+
+    public function getMatchesTypeCounts(): array
+    {
+        return [
+            'all'        => $this->queueQuery()->count(),
+            'matches'    => $this->queueQuery()->whereHas('account', fn (Builder $a) => $a->ofMatchesType('matches'))->count(),
+            'activation' => $this->queueQuery()->whereHas('account', fn (Builder $a) => $a->ofMatchesType('activation'))->count(),
+        ];
+    }
+
     public function table(Table $table): Table
     {
         return $table
-            ->query(
-                AccountAssignment::query()
-                    ->with('account')
-                    ->where('employee_id', auth()->id())
-                    ->where('tenant_id', filament()->getTenant()?->id)
-                    ->whereIn('status', [
-                        AccountAssignment::STATUS_PENDING,
-                        AccountAssignment::STATUS_IN_PROGRESS,
-                        AccountAssignment::STATUS_AWAITING_REVIEW,
-                    ])
-            )
+            // A closure so the matches-type switch is read at query time,
+            // not frozen at whatever it was when the table was built.
+            ->query(fn (): Builder => $this->queueQuery()
+                ->with('account')
+                ->when($this->activeMatchesType(), fn (Builder $q, string $type) => $q
+                    ->whereHas('account', fn (Builder $a) => $a->ofMatchesType($type))))
             ->columns([
                 Tables\Columns\TextColumn::make('account.id')
                     ->label('حساب رقم')
@@ -304,6 +323,18 @@ class MyAccounts extends Page implements HasTable
                     ->icon(fn (AccountAssignment $record): ?string => $record->status === AccountAssignment::STATUS_IN_PROGRESS && $record->rejection_reason
                         ? 'heroicon-m-arrow-uturn-left'
                         : null),
+
+                // Always visible (not toggleable) — with match and
+                // activation-only accounts mixed in one queue, the employee
+                // has to know which kind it is before opening it.
+                Tables\Columns\TextColumn::make('account.matches_required')
+                    ->label('النوع')
+                    ->badge()
+                    ->color(fn (AccountAssignment $record): string => $record->account->requiresMatches() ? 'purple' : 'success')
+                    ->icon(fn (AccountAssignment $record): string => $record->account->requiresMatches() ? 'heroicon-m-trophy' : 'heroicon-m-check-badge')
+                    ->formatStateUsing(fn (AccountAssignment $record): string => $record->account->requiresMatches()
+                        ? "تفعيل + {$record->account->matches_required} مباريات"
+                        : 'تفعيل فقط'),
 
                 Tables\Columns\TextColumn::make('rejection_reason')
                     ->label('سبب الرفض')

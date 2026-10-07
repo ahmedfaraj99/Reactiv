@@ -39,6 +39,7 @@ class AppPanelProvider extends PanelProvider
                 'warning' => Color::Amber,
                 'danger'  => Color::Rose,
                 'info'    => Color::Sky,
+                'purple'  => Color::Purple,
             ])
             ->favicon(asset('favicon.ico'))
             ->sidebarCollapsibleOnDesktop()
