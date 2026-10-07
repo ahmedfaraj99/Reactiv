@@ -31,7 +31,9 @@ class AppPanelProvider extends PanelProvider
             ->path('app')
             ->brandName('FC27AC')
             ->font('Tajawal')
-            ->theme(asset('css/filament/app/theme.css'))
+            // Version stamp so browsers drop their cached copy after each
+            // theme rebuild — the plain URL never changes between deploys.
+            ->theme(asset('css/filament/app/theme.css').'?v='.@filemtime(public_path('css/filament/app/theme.css')))
             ->colors([
                 'primary' => Color::hex('#4F46E5'),
                 'gray'    => Color::Slate,
