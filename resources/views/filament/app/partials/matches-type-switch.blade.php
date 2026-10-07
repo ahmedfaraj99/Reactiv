@@ -3,15 +3,16 @@
      not by our compiled theme. --}}
 @php
     $counts = $this->getMatchesTypeCounts();
-    $options = [
-        'all'        => ['label' => 'كل الأنواع',          'icon' => 'heroicon-m-squares-2x2', 'color' => 'gray'],
-        'matches'    => ['label' => 'حسابات بمباريات',     'icon' => 'heroicon-m-trophy',      'color' => 'purple'],
+    $all = [
+        'matches'    => ['label' => 'حسابات بمباريات',          'icon' => 'heroicon-m-trophy',      'color' => 'purple'],
         'activation' => ['label' => 'تفعيل فقط (بدون مباريات)', 'icon' => 'heroicon-m-check-badge', 'color' => 'success'],
+        'all'        => ['label' => 'كل الأنواع',               'icon' => 'heroicon-m-squares-2x2', 'color' => 'gray'],
     ];
 @endphp
 
 <x-filament::tabs label="نوع الحساب">
-    @foreach ($options as $key => $opt)
+    @foreach ($this->getMatchesTypeOptions() as $key)
+        @php($opt = $all[$key])
         <x-filament::tabs.item
             :active="$this->matchesType === $key"
             :icon="$opt['icon']"

@@ -279,6 +279,19 @@ class MyAccounts extends Page implements HasTable
             ]);
     }
 
+    public function getMatchesTypeOptions(): array
+    {
+        return ['matches', 'activation'];
+    }
+
+    /** Open on whichever kind has work waiting — matches first, they take longest. */
+    protected function getDefaultMatchesType(): string
+    {
+        $counts = $this->getMatchesTypeCounts();
+
+        return $counts['matches'] === 0 && $counts['activation'] > 0 ? 'activation' : 'matches';
+    }
+
     public function getMatchesTypeCounts(): array
     {
         return [

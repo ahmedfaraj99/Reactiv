@@ -35,6 +35,7 @@ class AccountAssignmentNoteTest extends TestCase
         $this->actingAsTenantUser($supervisor);
 
         Livewire::test(ListAccounts::class)
+            ->set('matchesType', 'all')
             ->callTableAction('note', $account, data: ['notes' => 'جرّب كود الاحتياط الأول']);
 
         $this->assertSame('جرّب كود الاحتياط الأول', $account->assignment()->first()->notes);
@@ -55,6 +56,7 @@ class AccountAssignmentNoteTest extends TestCase
         $this->actingAsTenantUser($supervisorA);
 
         Livewire::test(ListAccounts::class)
+            ->set('matchesType', 'all')
             ->assertTableActionHidden('note', $account);
     }
 
@@ -67,6 +69,7 @@ class AccountAssignmentNoteTest extends TestCase
         $this->actingAsTenantUser($owner);
 
         Livewire::test(ListAccounts::class)
+            ->set('matchesType', 'all')
             ->assertTableActionHidden('note', $account);
     }
 }

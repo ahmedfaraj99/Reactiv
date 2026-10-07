@@ -28,6 +28,10 @@ class MatchesTypeSwitchTest extends TestCase
         $this->actingAsTenantUser($owner);
 
         Livewire::test(ListAccounts::class)
+            ->assertSet('matchesType', 'matches')
+            ->assertCanSeeTableRecords([$withMatches])
+            ->assertCanNotSeeTableRecords([$activationOnly])
+            ->set('matchesType', 'all')
             ->assertCanSeeTableRecords([$withMatches, $activationOnly])
             ->set('matchesType', 'matches')
             ->assertCanSeeTableRecords([$withMatches])
@@ -74,9 +78,12 @@ class MatchesTypeSwitchTest extends TestCase
             ->assertSee('تفعيل فقط');
         $ids = fn () => $component->instance()->getTableRecords()->pluck('id')->sort()->values()->all();
 
-        $this->assertSame(collect([$matchAssignment->id, $plainAssignment->id])->sort()->values()->all(), $ids());
+        // No mixed "all" view for employees — opens on matches.
+        $component->assertSet('matchesType', 'matches');
+        $this->assertSame([$matchAssignment->id], $ids());
+        $this->assertSame(['matches', 'activation'], $component->instance()->getMatchesTypeOptions());
 
-        $component->set('matchesType', 'matches');
+        $component->set('matchesType', 'all')->assertSet('matchesType', 'matches');
         $this->assertSame([$matchAssignment->id], $ids());
 
         $component->set('matchesType', 'activation');
@@ -85,7 +92,21 @@ class MatchesTypeSwitchTest extends TestCase
         $this->assertSame(['all' => 2, 'matches' => 1, 'activation' => 1], $component->instance()->getMatchesTypeCounts());
     }
 
-    public function test_unknown_type_falls_back_to_all(): void
+    public function test_employee_with_only_activation_accounts_opens_on_that_tab(): void
+    {
+        $tenant = $this->makeTenant();
+        $office = $this->makeOffice($tenant);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $office);
+        $this->makeAssignment($tenant, $this->makeAccount($tenant, ['matches_required' => 0]), $employee, [
+            'status' => AccountAssignment::STATUS_PENDING,
+        ]);
+
+        $this->actingAsTenantUser($employee);
+
+        Livewire::test(MyAccounts::class)->assertSet('matchesType', 'activation');
+    }
+
+    public function test_unknown_type_falls_back_to_matches(): void
     {
         $tenant = $this->makeTenant();
         $owner = $this->makeUser($tenant, UserRole::TenantOwner);
@@ -95,7 +116,7 @@ class MatchesTypeSwitchTest extends TestCase
 
         Livewire::test(ListAccounts::class)
             ->set('matchesType', 'bogus')
-            ->assertSet('matchesType', 'all')
+            ->assertSet('matchesType', 'matches')
             ->assertCanSeeTableRecords([$account]);
     }
 }
