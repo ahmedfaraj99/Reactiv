@@ -12,6 +12,7 @@ use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\ToggleButtons;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Forms\Get;
@@ -28,6 +29,10 @@ use Illuminate\Support\Facades\DB;
  * next to each name. No adding rows one by one. The system claims that
  * many available accounts (oldest first) for each employee in one submit.
  * Counts don't have to be equal.
+ *
+ * Every distribution is for ONE kind of account (matches or activation
+ * only) — employees work the two kinds differently, so the manager picks
+ * the kind first and every count on the page refers to that pool.
  */
 class DistributeAccounts extends Page implements HasForms
 {
@@ -89,6 +94,25 @@ class DistributeAccounts extends Page implements HasForms
     {
         return $form
             ->schema([
+                ToggleButtons::make('matches_type')
+                    ->label('نوع الحسابات المراد توزيعها')
+                    ->options(fn (): array => [
+                        'matches'    => 'حسابات بمباريات ('.$this->availableCount('matches').' متاح)',
+                        'activation' => 'تفعيل فقط ('.$this->availableCount('activation').' متاح)',
+                    ])
+                    ->icons([
+                        'matches'    => 'heroicon-m-trophy',
+                        'activation' => 'heroicon-m-check-badge',
+                    ])
+                    ->colors([
+                        'matches'    => 'purple',
+                        'activation' => 'success',
+                    ])
+                    ->inline()
+                    ->required()
+                    ->live()
+                    ->default('matches'),
+
                 Select::make('employee_ids')
                     ->label('اختر الموظفين')
                     ->helperText('اختر كل من تريد توزيع حسابات عليه دفعة واحدة — لا حاجة لإضافتهم واحداً تلو الآخر.')
@@ -129,13 +153,26 @@ class DistributeAccounts extends Page implements HasForms
             ->statePath('data');
     }
 
-    public function availableCount(): int
+    /** Available accounts of one kind ('matches' / 'activation'), or both when null. */
+    public function availableCount(?string $type = null): int
     {
         return Account::query()
             ->where('tenant_id', filament()->getTenant()->id)
             ->where('manager_id', self::scopedManagerId())
             ->where('status', 'available')
+            ->ofMatchesType($type)
             ->count();
+    }
+
+    /** The kind picked on the form — falls back to matches, the form's default. */
+    public function selectedMatchesType(): string
+    {
+        return ($this->data['matches_type'] ?? null) === 'activation' ? 'activation' : 'matches';
+    }
+
+    public function selectedMatchesTypeLabel(): string
+    {
+        return $this->selectedMatchesType() === 'matches' ? 'بمباريات' : 'تفعيل فقط';
     }
 
     public function equalizeAction(): Action
@@ -152,7 +189,7 @@ class DistributeAccounts extends Page implements HasForms
                     return;
                 }
 
-                $available = $this->availableCount();
+                $available = $this->availableCount($this->selectedMatchesType());
                 $share = intdiv($available, $employeeCount);
                 $remainder = $available % $employeeCount;
 
@@ -160,7 +197,11 @@ class DistributeAccounts extends Page implements HasForms
                     $rows[$i]['count'] = $share + ($i < $remainder ? 1 : 0);
                 }
 
-                $this->form->fill(['employee_ids' => array_column($rows, 'employee_id'), 'rows' => $rows]);
+                $this->form->fill([
+                    'matches_type' => $this->selectedMatchesType(),
+                    'employee_ids' => array_column($rows, 'employee_id'),
+                    'rows'         => $rows,
+                ]);
             });
     }
 
@@ -171,7 +212,7 @@ class DistributeAccounts extends Page implements HasForms
             ->icon('heroicon-o-check-circle')
             ->color('primary')
             ->requiresConfirmation()
-            ->modalDescription('سيُخصَّص العدد المحدد من الحسابات المتاحة (الأقدم رفعاً أولاً) لكل موظف مباشرة.')
+            ->modalDescription(fn (): string => 'سيُخصَّص العدد المحدد من حسابات «'.$this->selectedMatchesTypeLabel().'» المتاحة (الأقدم رفعاً أولاً) لكل موظف مباشرة.')
             ->action(function (): void {
                 $state = $this->form->getState();
                 $rows = $state['rows'] ?? [];
@@ -181,14 +222,17 @@ class DistributeAccounts extends Page implements HasForms
                     return;
                 }
 
+                $type = $state['matches_type'] === 'activation' ? 'activation' : 'matches';
+                $typeLabel = $type === 'matches' ? 'بمباريات' : 'تفعيل فقط';
+
                 $totalRequested = array_sum(array_column($rows, 'count'));
-                $available = $this->availableCount();
+                $available = $this->availableCount($type);
 
                 if ($totalRequested > $available) {
                     Notification::make()
                         ->danger()
                         ->title('العدد المطلوب أكبر من المتاح')
-                        ->body("طلبت {$totalRequested}، والمتاح فعلياً {$available} فقط.")
+                        ->body("طلبت {$totalRequested}، والمتاح فعلياً من حسابات «{$typeLabel}» {$available} فقط.")
                         ->send();
                     return;
                 }
@@ -197,7 +241,7 @@ class DistributeAccounts extends Page implements HasForms
                 $managerId = self::scopedManagerId();
                 $summary = [];
 
-                DB::transaction(function () use ($rows, $tenantId, $managerId, &$summary): void {
+                DB::transaction(function () use ($rows, $tenantId, $managerId, $type, &$summary): void {
                     foreach ($rows as $row) {
                         $employeeId = (int) $row['employee_id'];
                         $count = (int) $row['count'];
@@ -206,6 +250,7 @@ class DistributeAccounts extends Page implements HasForms
                             ->where('tenant_id', $tenantId)
                             ->where('manager_id', $managerId)
                             ->where('status', 'available')
+                            ->ofMatchesType($type)
                             ->orderBy('created_at')
                             ->lockForUpdate()
                             ->limit($count)
@@ -220,11 +265,13 @@ class DistributeAccounts extends Page implements HasForms
 
                 Notification::make()
                     ->success()
-                    ->title('اكتمل التوزيع')
+                    ->title("اكتمل توزيع حسابات «{$typeLabel}»")
                     ->body(implode(' — ', $summary))
                     ->send();
 
-                $this->form->fill();
+                // Stay on the same kind — managers usually hand out one
+                // kind in several rounds.
+                $this->form->fill(['matches_type' => $type]);
             });
     }
 }
