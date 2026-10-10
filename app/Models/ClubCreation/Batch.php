@@ -29,7 +29,7 @@ class Batch extends Model
     protected $table = 'club_creation_batches';
 
     protected $fillable = [
-        'tenant_id', 'token', 'recipient', 'account_count',
+        'tenant_id', 'platform', 'token', 'recipient', 'account_count',
         'price_per_account', 'notes', 'opened_at',
         'first_open_ip', 'first_open_ua',
         'revoked_at', 'expires_at',
@@ -44,6 +44,11 @@ class Batch extends Model
             'revoked_at'        => 'datetime',
             'expires_at'        => 'datetime',
         ];
+    }
+
+    public function platformLabel(): string
+    {
+        return Account::PLATFORMS[$this->platform] ?? $this->platform;
     }
 
     public function isRevoked(): bool

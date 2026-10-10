@@ -121,6 +121,24 @@
         .done-btn:hover { background: #4338ca; }
         .done-btn:disabled { background: #94a3b8; cursor: not-allowed; }
         .card.done .done-btn { background: #10b981; }
+        .totp-btn {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #4f46e5;
+            border-radius: 8px;
+            background: white;
+            color: #4f46e5;
+            font-family: 'Tajawal', sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .totp-btn.warn { border-color: #d97706; color: #b45309; background: #fffbeb; }
+        .totp-btn:disabled { border-color: #cbd5e1; color: #94a3b8; background: #f8fafc; cursor: not-allowed; }
+        .totp [hidden] { display: none !important; }
+        .totp-value { margin-bottom: 6px; }
+        .totp-value input { font-size: 22px; font-weight: 700; letter-spacing: 4px; text-align: center; }
+        .totp-timer { font-size: 12px; color: #64748b; margin-bottom: 6px; text-align: center; }
         .foot {
             text-align: center;
             font-size: 12px;
@@ -131,6 +149,7 @@
     </style>
 </head>
 <body>
+@php($platformLabel = $batch->platformLabel())
 <div class="wrap">
     <div class="header">
         <h1>{{ $batch->account_count }} حساب جاهز للتفعيل</h1>
@@ -140,7 +159,8 @@
     <div class="steps">
         <h3>الخطوات لكل حساب:</h3>
         <ol>
-            <li>ادخل بيانات الحساب على PlayStation</li>
+            <li>ادخل البريد والرمز على جهاز {{ $platformLabel }}</li>
+            <li>عند طلب كود التحقق اضغط "توليد كود" وأدخله فوراً — الكود يظهر لمدة قصيرة</li>
             <li>افتح FIFA / EA Sports FC</li>
             <li>ادخل Ultimate Team</li>
             <li>أنشئ نادياً (Create Club)</li>
@@ -160,7 +180,7 @@
             </div>
 
             <div class="field">
-                <label>البريد الإلكتروني</label>
+                <label>بريد {{ $platformLabel }}</label>
                 <div class="field-value">
                     <input type="text" value="{{ $account->email }}" readonly>
                     <button type="button" onclick="copyValue(this)">نسخ</button>
@@ -168,28 +188,29 @@
             </div>
 
             <div class="field">
-                <label>كلمة المرور</label>
+                <label>رمز {{ $platformLabel }}</label>
                 <div class="field-value">
                     <input type="text" value="{{ $account->password }}" readonly>
                     <button type="button" onclick="copyValue(this)">نسخ</button>
                 </div>
             </div>
 
-            <div class="field">
-                <label>EA Backup Code</label>
-                <div class="field-value">
-                    <input type="text" value="{{ $account->ea_backup_code }}" readonly>
-                    <button type="button" onclick="copyValue(this)">نسخ</button>
+            @if ($account->status === 'assigned')
+                <div class="field totp" id="totp-{{ $account->id }}"
+                     data-account-id="{{ $account->id }}"
+                     data-has-seed="{{ $account->hasTotp() ? '1' : '0' }}"
+                     data-used="{{ $account->totp_generations }}"
+                     data-allowance="{{ $account->totpAllowance() }}"
+                     data-pending="{{ $account->hasPendingTotpRequest() ? '1' : '0' }}">
+                    <label>كود التحقق (TOTP)</label>
+                    <div class="field-value totp-value" hidden>
+                        <input type="text" value="" readonly>
+                        <button type="button" onclick="copyValue(this)">نسخ</button>
+                    </div>
+                    <div class="totp-timer" hidden></div>
+                    <button type="button" class="totp-btn" onclick="totpClick(this)"></button>
                 </div>
-            </div>
-
-            <div class="field">
-                <label>PSN Backup Code</label>
-                <div class="field-value">
-                    <input type="text" value="{{ $account->psn_backup_code }}" readonly>
-                    <button type="button" onclick="copyValue(this)">نسخ</button>
-                </div>
-            </div>
+            @endif
 
             <button type="button"
                     class="done-btn"
@@ -211,6 +232,118 @@
 <script>
     const DONE_URL_TEMPLATE = @json(url('/cc/' . $batch->token . '/done'));
     const CSRF = @json(csrf_token());
+
+    const TOTP_URL = @json(url('/cc/' . $batch->token . '/totp'));
+    const TOTP_REQUEST_URL = @json(url('/cc/' . $batch->token . '/totp-request'));
+    const TOTP_STATUS_URL = @json(url('/cc/' . $batch->token . '/totp-status'));
+    const totpTimers = {};
+    const totpPolls = {};
+
+    // Mirrors the activation page: "generate (used/allowance)" while
+    // allowance remains, then "ask the owner", then "waiting".
+    function renderTotp(box) {
+        const btn = box.querySelector('.totp-btn');
+        const used = +box.dataset.used, allowance = +box.dataset.allowance;
+        btn.classList.remove('warn');
+        btn.disabled = false;
+
+        if (box.dataset.hasSeed !== '1') {
+            btn.textContent = 'لا يوجد كود تحقق لهذا الحساب — تواصل معنا';
+            btn.disabled = true;
+        } else if (used < allowance) {
+            btn.textContent = 'توليد كود (' + used + '/' + allowance + ')';
+        } else if (box.dataset.pending === '1') {
+            btn.textContent = 'بانتظار موافقة المالك';
+            btn.classList.add('warn');
+            btn.disabled = true;
+            startPoll(box);
+        } else {
+            btn.textContent = 'إرسال طلب كود إضافي';
+            btn.classList.add('warn');
+        }
+    }
+
+    function applyState(box, data) {
+        if (typeof data.used === 'number') box.dataset.used = data.used;
+        if (typeof data.allowance === 'number') box.dataset.allowance = data.allowance;
+        if (typeof data.pending === 'boolean') box.dataset.pending = data.pending ? '1' : '0';
+        renderTotp(box);
+    }
+
+    function postJson(url) {
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json' },
+        }).then(r => r.json().then(data => ({ ok: r.ok, data })));
+    }
+
+    function totpClick(btn) {
+        const box = btn.closest('.totp');
+        const id = box.dataset.accountId;
+        const canGenerate = +box.dataset.used < +box.dataset.allowance;
+
+        if (!canGenerate && !confirm('وصلت للحد المسموح. إرسال طلب كود إضافي للمالك؟')) return;
+
+        btn.disabled = true;
+        const url = (canGenerate ? TOTP_URL : TOTP_REQUEST_URL) + '/' + id;
+
+        postJson(url).then(({ ok, data }) => {
+            applyState(box, data);
+            if (ok && data.code) showCode(box, data.code, data.seconds);
+            else if (data.message) alert(data.message);
+        }).catch(() => {
+            renderTotp(box);
+            alert('تعذّر الاتصال — حاول مجدداً.');
+        });
+    }
+
+    // One generation = one visible window; when it elapses the code is
+    // cleared and another press (another allowance) is needed.
+    function showCode(box, code, seconds) {
+        const id = box.dataset.accountId;
+        const wrap = box.querySelector('.totp-value');
+        const timer = box.querySelector('.totp-timer');
+        const input = wrap.querySelector('input');
+        input.value = code;
+        wrap.hidden = false;
+        timer.hidden = false;
+
+        clearInterval(totpTimers[id]);
+        const until = Date.now() + seconds * 1000;
+        const tick = () => {
+            const left = Math.max(0, Math.round((until - Date.now()) / 1000));
+            timer.textContent = 'يختفي الكود خلال ' + left + ' ثانية';
+            if (left === 0) {
+                clearInterval(totpTimers[id]);
+                input.value = '';
+                wrap.hidden = true;
+                timer.hidden = true;
+            }
+        };
+        tick();
+        totpTimers[id] = setInterval(tick, 1000);
+    }
+
+    function startPoll(box) {
+        const id = box.dataset.accountId;
+        if (totpPolls[id]) return;
+        totpPolls[id] = setInterval(() => {
+            fetch(TOTP_STATUS_URL + '/' + id, { headers: { 'Accept': 'application/json' } })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.pending) return;
+                    clearInterval(totpPolls[id]);
+                    delete totpPolls[id];
+                    applyState(box, data);
+                    alert(data.can_generate
+                        ? 'تمت الموافقة — تقدر تولّد كوداً جديداً الآن.'
+                        : 'لم تتم الموافقة على الطلب.');
+                })
+                .catch(() => {});
+        }, 10000);
+    }
+
+    document.querySelectorAll('.totp').forEach(renderTotp);
 
     function copyValue(btn) {
         const input = btn.parentElement.querySelector('input');
@@ -268,6 +401,12 @@
             badge.classList.add('done');
             badge.textContent = 'مكتمل ✓';
             btn.textContent = '✓ تم إنجازه';
+            const box = document.getElementById('totp-' + id);
+            if (box) {
+                clearInterval(totpPolls[id]);
+                clearInterval(totpTimers[id]);
+                box.remove();
+            }
         })
         .catch(() => {
             btn.disabled = false;

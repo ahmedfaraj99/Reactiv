@@ -221,7 +221,7 @@ class CompletedResource extends Resource
             $writer->openToFile('php://output');
 
             $writer->addRow(Row::fromValues([
-                'Email', 'Password', 'EA Backup Code', 'PSN Backup Code',
+                'Platform', 'EMAIL', 'PW', 'EA PW', 'GAUTH', 'EA GAUTH',
                 'Recipient', 'Batch #', 'Done At', 'Exported At',
             ]));
 
@@ -243,10 +243,12 @@ class CompletedResource extends Resource
             $query->orderBy('id')->chunk(500, function ($chunk) use ($writer, &$writtenIds): void {
                 foreach ($chunk as $account) {
                     $writer->addRow(Row::fromValues([
+                        $account->platformLabel(),
                         $account->email,
                         $account->password,
-                        $account->ea_backup_code,
-                        $account->psn_backup_code,
+                        $account->ea_password,
+                        $account->totp_seed,
+                        $account->ea_totp_seed,
                         $account->batch?->recipient ?? '',
                         $account->batch_id,
                         optional($account->done_at)->format('Y-m-d H:i'),

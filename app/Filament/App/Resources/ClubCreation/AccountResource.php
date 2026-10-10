@@ -18,9 +18,11 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use OpenSpout\Common\Entity\Row;
+use ParagonIE\ConstantTime\Base32;
 use OpenSpout\Common\Entity\Style\Color;
 use OpenSpout\Common\Entity\Style\Style;
 use OpenSpout\Reader\XLSX\Reader as XlsxReader;
+use OpenSpout\Writer\XLSX\Options as XlsxOptions;
 use OpenSpout\Writer\XLSX\Writer as XlsxWriter;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -62,25 +64,42 @@ class AccountResource extends Resource
     public static function form(Form $form): Form
     {
         return $form->schema([
+            Forms\Components\Select::make('platform')
+                ->label('المنصة')
+                ->options(Account::PLATFORMS)
+                ->default(Account::PLATFORM_PSN)
+                ->required()
+                ->native(false),
+
             Forms\Components\TextInput::make('email')
-                ->label('البريد الإلكتروني')
+                ->label('بريد الكونسول')
                 ->required()
                 ->maxLength(255),
 
             Forms\Components\TextInput::make('password')
-                ->label('كلمة المرور')
+                ->label('رمز الكونسول')
                 ->required()
                 ->maxLength(255),
 
-            Forms\Components\TextInput::make('ea_backup_code')
-                ->label('EA Backup Code')
-                ->required()
-                ->maxLength(64),
+            Forms\Components\TextInput::make('ea_password')
+                ->label('EA PW')
+                ->maxLength(255),
 
-            Forms\Components\TextInput::make('psn_backup_code')
-                ->label('PSN Backup Code')
-                ->required()
-                ->maxLength(64),
+            // Seeds are $hidden on the model, so the edit modal never
+            // prefills them — blank means "keep the stored one".
+            Forms\Components\TextInput::make('totp_seed')
+                ->label('GAUTH الكونسول')
+                ->placeholder('اتركه فارغاً للإبقاء على المفتاح الحالي')
+                ->rule(fn () => self::base32Rule())
+                ->dehydrated(fn (?string $state): bool => filled($state))
+                ->dehydrateStateUsing(fn (?string $state): ?string => self::normalizeSeed($state)),
+
+            Forms\Components\TextInput::make('ea_totp_seed')
+                ->label('EA GAUTH')
+                ->placeholder('اتركه فارغاً للإبقاء على المفتاح الحالي')
+                ->rule(fn () => self::base32Rule())
+                ->dehydrated(fn (?string $state): bool => filled($state))
+                ->dehydrateStateUsing(fn (?string $state): ?string => self::normalizeSeed($state)),
         ]);
     }
 
@@ -90,29 +109,35 @@ class AccountResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('id')->label('#')->sortable(),
 
+                Tables\Columns\TextColumn::make('platform')
+                    ->label('المنصة')
+                    ->badge()
+                    ->color(fn (string $state): string => $state === Account::PLATFORM_XBOX ? 'success' : 'info')
+                    ->formatStateUsing(fn (string $state): string => Account::PLATFORMS[$state] ?? $state),
+
                 Tables\Columns\TextColumn::make('email')
-                    ->label('البريد الإلكتروني')
+                    ->label('بريد الكونسول')
                     ->searchable()
                     ->copyable()
                     ->fontFamily('mono'),
 
                 Tables\Columns\TextColumn::make('password')
-                    ->label('كلمة المرور')
+                    ->label('رمز الكونسول')
                     ->copyable()
                     ->fontFamily('mono')
                     ->toggleable(isToggledHiddenByDefault: true),
 
-                Tables\Columns\TextColumn::make('ea_backup_code')
-                    ->label('EA Backup')
+                Tables\Columns\TextColumn::make('ea_password')
+                    ->label('EA PW')
+                    ->placeholder('—')
                     ->copyable()
                     ->fontFamily('mono')
                     ->toggleable(isToggledHiddenByDefault: true),
 
-                Tables\Columns\TextColumn::make('psn_backup_code')
-                    ->label('PSN Backup')
-                    ->copyable()
-                    ->fontFamily('mono')
-                    ->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('totp_generations')
+                    ->label('أكواد مولّدة')
+                    ->formatStateUsing(fn (Account $r): string => $r->totp_generations.'/'.$r->totpAllowance())
+                    ->toggleable(),
 
                 Tables\Columns\TextColumn::make('status')
                     ->label('الحالة')
@@ -150,6 +175,10 @@ class AccountResource extends Resource
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
+                Tables\Filters\SelectFilter::make('platform')
+                    ->label('المنصة')
+                    ->options(Account::PLATFORMS),
+
                 Tables\Filters\SelectFilter::make('status')
                     ->label('الحالة')
                     ->options([
@@ -160,11 +189,7 @@ class AccountResource extends Resource
                     ]),
             ])
             ->headerActions([
-                Tables\Actions\Action::make('downloadTemplate')
-                    ->label('تحميل النموذج')
-                    ->icon('heroicon-o-document-arrow-down')
-                    ->color('gray')
-                    ->action(fn () => self::streamTemplate()),
+                self::templateActions('downloadTemplate'),
 
                 Tables\Actions\Action::make('bulkUpload')
                     ->label('رفع دفعة حسابات')
@@ -177,11 +202,19 @@ class AccountResource extends Resource
                             ->content(new \Illuminate\Support\HtmlString(
                                 '<div class="text-sm space-y-1 leading-6">'
                                 . '<div>• الملف يجب أن يكون Excel (.xlsx) أو CSV (.csv).</div>'
-                                . '<div>• الأعمدة بالترتيب: <b>email</b>, <b>password</b>, <b>ea_backup_code</b>, <b>psn_backup_code</b>.</div>'
+                                . '<div>• الأعمدة بالترتيب: <b>EMAIL</b>, <b>PW</b>, <b>EA PW</b>, <b>GAUTH</b>, <b>EA GAUTH</b> — نفس الترتيب لـ PlayStation و Xbox.</div>'
+                                . '<div>• GAUTH = مفتاح المصادقة (Base32)، وليس كوداً من 6 أرقام.</div>'
                                 . '<div>• الصف الأول للعناوين، وكل صف بعده = حساب واحد.</div>'
-                                . '<div>• حمّل النموذج الفارغ أعلاه لتعرف الترتيب الصحيح.</div>'
+                                . '<div>• حمّل نموذج المنصة من زر «تحميل النموذج» أعلاه وعبّئه.</div>'
                                 . '</div>'
                             )),
+
+                        Forms\Components\Select::make('platform')
+                            ->label('منصة الحسابات في هذا الملف')
+                            ->options(Account::PLATFORMS)
+                            ->default(Account::PLATFORM_PSN)
+                            ->required()
+                            ->native(false),
 
                         Forms\Components\FileUpload::make('file')
                             ->label('ملف الحسابات')
@@ -232,7 +265,11 @@ class AccountResource extends Resource
                             Storage::disk('local')->delete($relativePath);
                         }
 
-                        $stats = self::importRows($rows, $tenantId);
+                        $platform = array_key_exists($data['platform'] ?? '', Account::PLATFORMS)
+                            ? $data['platform']
+                            : Account::PLATFORM_PSN;
+
+                        $stats = self::importRows($rows, $tenantId, $platform);
 
                         Notification::make()
                             ->title('تم الرفع')
@@ -254,37 +291,40 @@ class AccountResource extends Resource
             ])
             ->emptyStateIcon('heroicon-o-rectangle-stack')
             ->emptyStateHeading('لا يوجد حسابات بعد')
-            ->emptyStateDescription('ابدأ برفع دفعة من ملف Excel أو CSV. حمّل النموذج لتعرف ترتيب الأعمدة.')
+            ->emptyStateDescription('ابدأ برفع دفعة من ملف Excel أو CSV (PlayStation أو Xbox). حمّل النموذج لتعرف ترتيب الأعمدة.')
             ->emptyStateActions([
-                Tables\Actions\Action::make('emptyDownloadTemplate')
-                    ->label('تحميل النموذج')
-                    ->icon('heroicon-o-document-arrow-down')
-                    ->color('gray')
-                    ->action(fn () => self::streamTemplate()),
+                self::templateActions('emptyDownloadTemplate'),
             ])
             ->defaultSort('created_at', 'desc');
     }
 
     /**
-     * @param  iterable<array{0:string,1:string,2:string,3:string}> $rows
+     * Row = [EMAIL, PW, EA PW, GAUTH, EA GAUTH]. The console GAUTH is
+     * mandatory (the delivery link can't produce a code without it);
+     * the EA pair is stored when present. Seeds must be valid Base32.
+     *
+     * @param  iterable<array{0:string,1:string,2:string,3:string,4:string}> $rows
      * @return array{added:int,duplicates:int,skipped:int}
      */
-    protected static function importRows(iterable $rows, int $tenantId): array
+    protected static function importRows(iterable $rows, int $tenantId, string $platform): array
     {
         $added = 0;
         $duplicates = 0;
         $skipped = 0;
         $seenInBatch = [];
 
-        DB::transaction(function () use ($rows, $tenantId, &$added, &$duplicates, &$skipped, &$seenInBatch): void {
+        DB::transaction(function () use ($rows, $tenantId, $platform, &$added, &$duplicates, &$skipped, &$seenInBatch): void {
             foreach ($rows as $row) {
                 $email = trim((string) ($row[0] ?? ''));
                 $password = trim((string) ($row[1] ?? ''));
-                $eaCode = trim((string) ($row[2] ?? ''));
-                $psnCode = trim((string) ($row[3] ?? ''));
+                $eaPassword = trim((string) ($row[2] ?? ''));
+                $seed = self::normalizeSeed($row[3] ?? null);
+                $eaSeed = self::normalizeSeed($row[4] ?? null);
 
-                if ($email === '' || $password === '' || $eaCode === '' || $psnCode === ''
-                    || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                if ($email === '' || $password === '' || $seed === null
+                    || ! filter_var($email, FILTER_VALIDATE_EMAIL)
+                    || ! self::isValidBase32($seed)
+                    || ($eaSeed !== null && ! self::isValidBase32($eaSeed))) {
                     $skipped++;
                     continue;
                 }
@@ -299,12 +339,14 @@ class AccountResource extends Resource
                 }
 
                 Account::create([
-                    'tenant_id'       => $tenantId,
-                    'email'           => $email,
-                    'password'        => $password,
-                    'ea_backup_code'  => $eaCode,
-                    'psn_backup_code' => $psnCode,
-                    'status'          => Account::STATUS_AVAILABLE,
+                    'tenant_id'    => $tenantId,
+                    'platform'     => $platform,
+                    'email'        => $email,
+                    'password'     => $password,
+                    'ea_password'  => $eaPassword !== '' ? $eaPassword : null,
+                    'totp_seed'    => $seed,
+                    'ea_totp_seed' => $eaSeed,
+                    'status'       => Account::STATUS_AVAILABLE,
                 ]);
 
                 $seenInBatch[$email] = true;
@@ -316,7 +358,7 @@ class AccountResource extends Resource
     }
 
     /**
-     * @return list<array{0:string,1:string,2:string,3:string}>
+     * @return list<array{0:string,1:string,2:string,3:string,4:string}>
      */
     protected static function readXlsx(string $path): array
     {
@@ -332,7 +374,7 @@ class AccountResource extends Resource
                 if ($isFirst) {
                     $isFirst = false;
                     $first = strtolower(trim($cells[0] ?? ''));
-                    if ($first === 'email' || $first === 'e-mail' || $first === 'البريد') {
+                    if (self::isHeaderCell($first)) {
                         continue;
                     }
                 }
@@ -346,6 +388,7 @@ class AccountResource extends Resource
                     $cells[1] ?? '',
                     $cells[2] ?? '',
                     $cells[3] ?? '',
+                    $cells[4] ?? '',
                 ];
             }
 
@@ -358,7 +401,7 @@ class AccountResource extends Resource
     }
 
     /**
-     * @return list<array{0:string,1:string,2:string,3:string}>
+     * @return list<array{0:string,1:string,2:string,3:string,4:string}>
      */
     protected static function readCsv(string $path): array
     {
@@ -373,7 +416,7 @@ class AccountResource extends Resource
             if ($isFirst) {
                 $isFirst = false;
                 $first = strtolower(trim($cells[0] ?? ''));
-                if ($first === 'email' || $first === 'e-mail' || $first === 'البريد') {
+                if (self::isHeaderCell($first)) {
                     continue;
                 }
             }
@@ -387,6 +430,7 @@ class AccountResource extends Resource
                 $cells[1] ?? '',
                 $cells[2] ?? '',
                 $cells[3] ?? '',
+                $cells[4] ?? '',
             ];
         }
 
@@ -396,14 +440,25 @@ class AccountResource extends Resource
     }
 
     /**
-     * Downloadable empty XLSX template so operators know the exact
-     * column order (email, password) before filling their sheet.
+     * Downloadable template, one per platform so each file is filled
+     * and uploaded for a single platform. Sheet 1 is headers only — no
+     * sample rows that could get imported by mistake (the importer
+     * reads the first sheet alone); the instructions and an example
+     * live on sheet 2.
      */
-    protected static function streamTemplate(): StreamedResponse
+    protected static function streamTemplate(string $platform): StreamedResponse
     {
-        return new StreamedResponse(function (): void {
-            $writer = new XlsxWriter();
+        $label = Account::PLATFORMS[$platform] ?? 'PlayStation';
+
+        return new StreamedResponse(function () use ($label): void {
+            $options = new XlsxOptions();
+            $options->setColumnWidth(34, 1);
+            $options->setColumnWidth(22, 2, 3);
+            $options->setColumnWidth(40, 4, 5);
+
+            $writer = new XlsxWriter($options);
             $writer->openToFile('php://output');
+            $writer->getCurrentSheet()->setName('Accounts');
 
             $headerStyle = (new Style())
                 ->setFontBold()
@@ -411,23 +466,99 @@ class AccountResource extends Resource
                 ->setFontColor(Color::WHITE);
 
             $writer->addRow(Row::fromValues(
-                ['email', 'password', 'ea_backup_code', 'psn_backup_code'],
+                ['EMAIL', 'PW', 'EA PW', 'GAUTH', 'EA GAUTH'],
                 $headerStyle
             ));
 
+            $writer->addNewSheetAndMakeItCurrent()->setName('تعليمات');
+            $bold = (new Style())->setFontBold();
+
+            foreach ([
+                ['نموذج حسابات '.$label, '', '', '', ''],
+                ['', '', '', '', ''],
+                ['• عبّئ الحسابات في الورقة الأولى (Accounts) فقط — كل صف = حساب واحد، ولا تغيّر صف العناوين.', '', '', '', ''],
+                ['• عند الرفع اختر المنصة: '.$label.'. لا تخلط حسابات منصتين في ملف واحد.', '', '', '', ''],
+                ['• EMAIL و PW و GAUTH إلزامية. EA PW و EA GAUTH اختيارية.', '', '', '', ''],
+                ['• GAUTH = المفتاح السري للمصادقة (حروف A-Z وأرقام 2-7)، وليس الكود المكوّن من 6 أرقام.', '', '', '', ''],
+                ['• المسافات والأحرف الصغيرة في المفتاح مقبولة وتُنظَّف تلقائياً.', '', '', '', ''],
+                ['• إذا كان الرمز أرقاماً تبدأ بصفر، اجعل خلايا العمود بتنسيق "نص" قبل اللصق.', '', '', '', ''],
+                ['', '', '', '', ''],
+            ] as $i => $line) {
+                $writer->addRow(Row::fromValues($line, $i === 0 ? $bold : null));
+            }
+
+            $writer->addRow(Row::fromValues(['مثال (للتوضيح فقط — لا تنسخه):', '', '', '', ''], $bold));
+            $writer->addRow(Row::fromValues(['EMAIL', 'PW', 'EA PW', 'GAUTH', 'EA GAUTH'], $headerStyle));
             $writer->addRow(Row::fromValues([
-                'example1@ea.com', 'Pass!Example123', 'EA-8H4K-9P2M', 'PSN-Q7R2-N5X1',
-            ]));
-            $writer->addRow(Row::fromValues([
-                'example2@ea.com', 'AnotherPass!456', 'EA-2F8V-6C3D', 'PSN-J4K9-B2M5',
+                'example@mail.com', 'Pass!Example123', 'EaPass!123', 'JBSWY3DPEHPK3PXP', 'KRSXG5CTMVRXEZLU',
             ]));
 
             $writer->close();
         }, 200, [
             'Content-Type'        => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'Content-Disposition' => 'attachment; filename="club-accounts-template.xlsx"',
+            'Content-Disposition' => 'attachment; filename="club-accounts-'.$platform.'-template.xlsx"',
             'Cache-Control'       => 'no-store, no-cache',
         ]);
+    }
+
+    /**
+     * "تحميل النموذج" with one entry per platform.
+     */
+    protected static function templateActions(string $prefix): Tables\Actions\ActionGroup
+    {
+        return Tables\Actions\ActionGroup::make(
+            collect(Account::PLATFORMS)
+                ->map(fn (string $label, string $platform) => Tables\Actions\Action::make($prefix.ucfirst($platform))
+                    ->label('نموذج '.$label)
+                    ->action(fn () => self::streamTemplate($platform)))
+                ->values()
+                ->all()
+        )
+            ->label('تحميل النموذج')
+            ->icon('heroicon-o-document-arrow-down')
+            ->color('gray')
+            ->button();
+    }
+
+    protected static function isHeaderCell(string $first): bool
+    {
+        return in_array($first, ['email', 'e-mail', 'البريد', 'psn email', 'xbox email'], true);
+    }
+
+    /**
+     * Authenticator exports often come spaced ("JBSW Y3DP ...") or in
+     * lowercase; store the canonical uppercase, no-space form.
+     */
+    protected static function normalizeSeed(?string $seed): ?string
+    {
+        $seed = strtoupper((string) preg_replace('/[\s-]+/', '', (string) $seed));
+
+        return $seed !== '' ? $seed : null;
+    }
+
+    protected static function isValidBase32(string $seed): bool
+    {
+        if (! preg_match('/^[A-Z2-7]+=*$/', $seed)) {
+            return false;
+        }
+
+        try {
+            Base32::decodeUpper($seed);
+
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    protected static function base32Rule(): \Closure
+    {
+        return function (string $attribute, $value, \Closure $fail): void {
+            $seed = self::normalizeSeed($value);
+            if ($seed !== null && ! self::isValidBase32($seed)) {
+                $fail('المفتاح ليس Base32 صالحاً.');
+            }
+        };
     }
 
     public static function getPages(): array

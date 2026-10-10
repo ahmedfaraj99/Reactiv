@@ -82,6 +82,12 @@ class BatchResource extends Resource
                     ->searchable()
                     ->weight('bold'),
 
+                Tables\Columns\TextColumn::make('platform')
+                    ->label('المنصة')
+                    ->badge()
+                    ->color(fn (string $state): string => $state === Account::PLATFORM_XBOX ? 'success' : 'info')
+                    ->formatStateUsing(fn (string $state): string => Account::PLATFORMS[$state] ?? $state),
+
                 Tables\Columns\TextColumn::make('account_count')
                     ->label('العدد')
                     ->badge()
@@ -207,15 +213,24 @@ class BatchResource extends Resource
                             ->maxLength(255)
                             ->helperText('نص حر — لن يُحفظ كسجل زبون'),
 
+                        Forms\Components\Select::make('platform')
+                            ->label('المنصة')
+                            ->options(Account::PLATFORMS)
+                            ->default(Account::PLATFORM_PSN)
+                            ->required()
+                            ->live()
+                            ->native(false),
+
                         Forms\Components\TextInput::make('count')
                             ->label('عدد الحسابات')
                             ->numeric()
                             ->required()
                             ->minValue(1)
                             ->default(1)
-                            ->helperText(function (): string {
+                            ->helperText(function (Forms\Get $get): string {
                                 $tenantId = Filament::getTenant()?->id;
                                 $available = Account::where('tenant_id', $tenantId)
+                                    ->where('platform', $get('platform') ?? Account::PLATFORM_PSN)
                                     ->where('status', Account::STATUS_AVAILABLE)
                                     ->count();
 
@@ -256,9 +271,15 @@ class BatchResource extends Resource
                         }
 
                         $count = (int) $data['count'];
+                        $platform = array_key_exists($data['platform'] ?? '', Account::PLATFORMS)
+                            ? $data['platform']
+                            : Account::PLATFORM_PSN;
 
-                        $batch = DB::transaction(function () use ($data, $count, $tenantId): ?Batch {
+                        $batch = DB::transaction(function () use ($data, $count, $tenantId, $platform): ?Batch {
+                            // One platform per link — the public page labels
+                            // everything PlayStation or Xbox accordingly.
                             $accounts = Account::where('tenant_id', $tenantId)
+                                ->where('platform', $platform)
                                 ->where('status', Account::STATUS_AVAILABLE)
                                 ->orderBy('id')
                                 ->limit($count)
@@ -277,6 +298,7 @@ class BatchResource extends Resource
 
                             $batch = Batch::create([
                                 'tenant_id'         => $tenantId,
+                                'platform'          => $platform,
                                 'recipient'         => $data['recipient'],
                                 'account_count'     => $count,
                                 'price_per_account' => $data['price_per_account'],
@@ -295,7 +317,7 @@ class BatchResource extends Resource
                         if ($batch === null) {
                             Notification::make()
                                 ->title('لا يوجد حسابات كافية')
-                                ->body('عدد الحسابات المتاحة أقل من المطلوب. ارفع حسابات جديدة أولاً.')
+                                ->body('عدد حسابات '.Account::PLATFORMS[$platform].' المتاحة أقل من المطلوب. ارفع حسابات جديدة أولاً.')
                                 ->danger()
                                 ->send();
 
@@ -435,7 +457,7 @@ class BatchResource extends Resource
             $writer->openToFile('php://output');
 
             $writer->addRow(Row::fromValues([
-                'Email', 'Password', 'EA Backup Code', 'PSN Backup Code',
+                'Platform', 'EMAIL', 'PW', 'EA PW', 'GAUTH', 'EA GAUTH',
                 'Recipient', 'Batch #', 'Done At',
             ]));
 
@@ -449,10 +471,12 @@ class BatchResource extends Resource
                 ->chunk(500, function ($chunk) use ($writer, &$ids): void {
                     foreach ($chunk as $account) {
                         $writer->addRow(Row::fromValues([
+                            $account->platformLabel(),
                             $account->email,
                             $account->password,
-                            $account->ea_backup_code,
-                            $account->psn_backup_code,
+                            $account->ea_password,
+                            $account->totp_seed,
+                            $account->ea_totp_seed,
                             $account->batch?->recipient ?? '',
                             $account->batch_id,
                             optional($account->done_at)->format('Y-m-d H:i'),

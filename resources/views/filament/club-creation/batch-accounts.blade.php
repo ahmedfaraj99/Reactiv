@@ -12,10 +12,10 @@
         <thead>
             <tr class="text-right border-b">
                 <th class="p-2">#</th>
-                <th class="p-2">البريد</th>
-                <th class="p-2">كلمة المرور</th>
-                <th class="p-2">EA Backup</th>
-                <th class="p-2">PSN Backup</th>
+                <th class="p-2">بريد الكونسول</th>
+                <th class="p-2">رمز الكونسول</th>
+                <th class="p-2">EA PW</th>
+                <th class="p-2">أكواد مولّدة</th>
                 <th class="p-2">الحالة</th>
                 <th class="p-2">تم في</th>
             </tr>
@@ -26,8 +26,8 @@
                     <td class="p-2">{{ $acc->id }}</td>
                     <td class="p-2" dir="ltr">{{ $acc->email }}</td>
                     <td class="p-2" dir="ltr">{{ $acc->password }}</td>
-                    <td class="p-2" dir="ltr">{{ $acc->ea_backup_code }}</td>
-                    <td class="p-2" dir="ltr">{{ $acc->psn_backup_code }}</td>
+                    <td class="p-2" dir="ltr">{{ $acc->ea_password ?? '—' }}</td>
+                    <td class="p-2">{{ $acc->totp_generations }}/{{ $acc->totpAllowance() }}@if($acc->hasPendingTotpRequest()) <span class="text-warning-600">(طلب معلّق)</span>@endif</td>
                     <td class="p-2">
                         @switch($acc->status)
                             @case('available') متاح @break
