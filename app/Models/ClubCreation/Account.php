@@ -35,6 +35,8 @@ class Account extends Model
     public const STATUS_ASSIGNED  = 'assigned';
     public const STATUS_DONE      = 'done';
     public const STATUS_EXPORTED  = 'exported';
+    /** Taken off a link after the worker started on it — owner checks by hand. */
+    public const STATUS_REVIEW    = 'review';
 
     public const PLATFORM_PSN  = 'psn';
     public const PLATFORM_XBOX = 'xbox';
@@ -58,12 +60,23 @@ class Account extends Model
 
     public const TOTP_BASE_LIMIT = 1;
 
+    /** Fresh code state for an account leaving a batch. */
+    public const RESET_TOTP = [
+        'totp_generations'      => 0,
+        'totp_extra_allowed'    => 0,
+        'totp_requested_at'     => null,
+        'first_totp_at'         => null,
+        'ea_totp_generations'   => 0,
+        'ea_totp_extra_allowed' => 0,
+        'ea_totp_requested_at'  => null,
+    ];
+
     protected $table = 'club_creation_accounts';
 
     protected $fillable = [
         'tenant_id', 'platform', 'email', 'password', 'ea_password', 'totp_seed', 'ea_totp_seed',
         'ea_backup_code', 'psn_backup_code',
-        'status', 'batch_id', 'done_at', 'exported_at',
+        'status', 'batch_id', 'released_from_batch_id', 'done_at', 'exported_at',
         'totp_generations', 'totp_extra_allowed', 'totp_requested_at', 'first_totp_at',
         'ea_totp_generations', 'ea_totp_extra_allowed', 'ea_totp_requested_at',
     ];
@@ -128,6 +141,23 @@ class Account extends Model
     public function hasPendingTotpRequest(string $kind = self::KIND_CONSOLE): bool
     {
         return $this->{self::totpColumn($kind, 'totp_requested_at')} !== null;
+    }
+
+    /**
+     * Did the worker get anywhere with this account? Generating any code
+     * means they at least signed in — it can't go back to the pool
+     * without a human check.
+     */
+    public function wasTouched(): bool
+    {
+        return $this->totpUsed(self::KIND_CONSOLE) > 0
+            || $this->totpUsed(self::KIND_EA) > 0
+            || $this->first_totp_at !== null;
+    }
+
+    public function releasedFromBatch(): BelongsTo
+    {
+        return $this->belongsTo(Batch::class, 'released_from_batch_id');
     }
 
     public function tenant(): BelongsTo

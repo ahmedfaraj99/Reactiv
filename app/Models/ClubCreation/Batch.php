@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
@@ -20,6 +21,7 @@ use Illuminate\Support\Str;
  * @property string      $price_per_account
  * @property ?string     $notes
  * @property ?\Illuminate\Support\Carbon $opened_at
+ * @property ?\Illuminate\Support\Carbon $closed_at
  */
 class Batch extends Model
 {
@@ -32,7 +34,7 @@ class Batch extends Model
         'tenant_id', 'platform', 'token', 'recipient', 'account_count',
         'price_per_account', 'notes', 'opened_at',
         'first_open_ip', 'first_open_ua',
-        'revoked_at', 'expires_at',
+        'revoked_at', 'closed_at', 'expires_at',
     ];
 
     protected function casts(): array
@@ -42,6 +44,7 @@ class Batch extends Model
             'price_per_account' => 'decimal:2',
             'opened_at'         => 'datetime',
             'revoked_at'        => 'datetime',
+            'closed_at'         => 'datetime',
             'expires_at'        => 'datetime',
         ];
     }
@@ -54,6 +57,11 @@ class Batch extends Model
     public function isRevoked(): bool
     {
         return $this->revoked_at !== null;
+    }
+
+    public function isClosed(): bool
+    {
+        return $this->closed_at !== null;
     }
 
     public function isExpired(): bool
@@ -140,5 +148,82 @@ class Batch extends Model
     public function isFullyDone(): bool
     {
         return $this->account_count > 0 && $this->doneCount() >= $this->account_count;
+    }
+
+    /**
+     * What the customer is owed for: everything requested while the
+     * batch is open, only what was actually finished once it's closed.
+     */
+    public function billableCount(): int
+    {
+        return $this->isClosed() ? $this->doneCount() : $this->account_count;
+    }
+
+    public function totalPrice(): float
+    {
+        return (float) $this->price_per_account * $this->billableCount();
+    }
+
+    /**
+     * Customer finished part of the batch and stopped: kill the link,
+     * keep the done accounts, release the rest (see releaseAccounts).
+     *
+     * @return array{available:int, review:int}
+     */
+    public function close(): array
+    {
+        return DB::transaction(function (): array {
+            $this->update([
+                'closed_at'  => now(),
+                'revoked_at' => $this->revoked_at ?? now(),
+            ]);
+
+            return $this->releaseAccounts(null, shrink: false);
+        });
+    }
+
+    /**
+     * Take unfinished accounts off this batch. Untouched ones (no code
+     * ever generated) go straight back to the pool; anything the worker
+     * started goes to `review` for the owner to check by hand. Codes,
+     * allowances and pending requests are reset either way so the next
+     * link starts clean.
+     *
+     * $shrink lowers account_count — used when the customer changes
+     * their mind and wants fewer, so the link and the bill shrink too.
+     *
+     * @param  list<int>|null  $accountIds  null = every unfinished account
+     * @return array{available:int, review:int}
+     */
+    public function releaseAccounts(?array $accountIds, bool $shrink): array
+    {
+        return DB::transaction(function () use ($accountIds, $shrink): array {
+            $accounts = Account::query()
+                ->where('batch_id', $this->id)
+                ->where('status', Account::STATUS_ASSIGNED)
+                ->when($accountIds !== null, fn ($q) => $q->whereIn('id', $accountIds))
+                ->lockForUpdate()
+                ->get();
+
+            $result = ['available' => 0, 'review' => 0];
+
+            foreach ($accounts as $account) {
+                $toReview = $account->wasTouched();
+
+                $account->update([
+                    'status'                 => $toReview ? Account::STATUS_REVIEW : Account::STATUS_AVAILABLE,
+                    'batch_id'               => null,
+                    'released_from_batch_id' => $toReview ? $this->id : null,
+                ] + Account::RESET_TOTP);
+
+                $result[$toReview ? 'review' : 'available']++;
+            }
+
+            if ($shrink && $accounts->isNotEmpty()) {
+                $this->update(['account_count' => max(0, $this->account_count - $accounts->count())]);
+            }
+
+            return $result;
+        });
     }
 }

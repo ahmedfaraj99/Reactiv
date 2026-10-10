@@ -47,6 +47,23 @@ class AccountResource extends Resource
         return auth()->user()?->hasRole(UserRole::TenantOwner->value) ?? false;
     }
 
+    public static function getNavigationBadge(): ?string
+    {
+        $count = static::getEloquentQuery()->where('status', Account::STATUS_REVIEW)->count();
+
+        return $count > 0 ? (string) $count : null;
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'danger';
+    }
+
+    public static function getNavigationBadgeTooltip(): ?string
+    {
+        return 'حسابات تحتاج مراجعة';
+    }
+
     public static function getEloquentQuery(): Builder
     {
         // Belt-and-braces tenant scoping. Filament's panel-level
@@ -148,6 +165,7 @@ class AccountResource extends Resource
                         Account::STATUS_ASSIGNED  => 'warning',
                         Account::STATUS_DONE      => 'success',
                         Account::STATUS_EXPORTED  => 'info',
+                        Account::STATUS_REVIEW    => 'danger',
                         default                   => 'gray',
                     })
                     ->formatStateUsing(fn (string $state): string => match ($state) {
@@ -155,12 +173,15 @@ class AccountResource extends Resource
                         Account::STATUS_ASSIGNED  => 'مُسنَد',
                         Account::STATUS_DONE      => 'مكتمل',
                         Account::STATUS_EXPORTED  => 'مُصدَّر',
+                        Account::STATUS_REVIEW    => 'يحتاج مراجعة',
                         default                   => $state,
                     }),
 
                 Tables\Columns\TextColumn::make('batch.recipient')
                     ->label('الزبون')
-                    ->placeholder('—')
+                    ->placeholder(fn (Account $r): string => $r->status === Account::STATUS_REVIEW && $r->releasedFromBatch
+                        ? 'أُخرج من دفعة #'.$r->releasedFromBatch->id.' — '.$r->releasedFromBatch->recipient
+                        : '—')
                     ->searchable(),
 
                 Tables\Columns\TextColumn::make('done_at')
@@ -187,6 +208,7 @@ class AccountResource extends Resource
                         Account::STATUS_ASSIGNED  => 'مُسنَد',
                         Account::STATUS_DONE      => 'مكتمل',
                         Account::STATUS_EXPORTED  => 'مُصدَّر',
+                        Account::STATUS_REVIEW    => 'يحتاج مراجعة',
                     ]),
             ])
             ->headerActions([
@@ -280,6 +302,43 @@ class AccountResource extends Resource
                     }),
             ])
             ->actions([
+                // Review = taken off a link after the worker started on it.
+                // The owner checks the account by hand, then either credits
+                // it as done (back to the batch it came from) or frees it.
+                Tables\Actions\Action::make('reviewDone')
+                    ->label('تم — النادي أُنشئ')
+                    ->icon('heroicon-o-check-circle')
+                    ->color('success')
+                    ->visible(fn (Account $r): bool => $r->status === Account::STATUS_REVIEW)
+                    ->requiresConfirmation()
+                    ->modalDescription('يُحسب الحساب منجزاً على الدفعة التي أُخرج منها، ويدخل في التصدير.')
+                    ->action(function (Account $record): void {
+                        $record->update([
+                            'status'                 => Account::STATUS_DONE,
+                            'done_at'                => now(),
+                            'batch_id'               => $record->released_from_batch_id,
+                            'released_from_batch_id' => null,
+                        ]);
+
+                        Notification::make()->success()->title('سُجّل الحساب منجزاً')->send();
+                    }),
+
+                Tables\Actions\Action::make('reviewRelease')
+                    ->label('إرجاع للمتاح')
+                    ->icon('heroicon-o-arrow-uturn-left')
+                    ->color('gray')
+                    ->visible(fn (Account $r): bool => $r->status === Account::STATUS_REVIEW)
+                    ->requiresConfirmation()
+                    ->modalDescription('تأكد أن الحساب سليم ولم يُنشأ عليه نادٍ — سيدخل في الروابط القادمة.')
+                    ->action(function (Account $record): void {
+                        $record->update([
+                            'status'                 => Account::STATUS_AVAILABLE,
+                            'released_from_batch_id' => null,
+                        ] + Account::RESET_TOTP);
+
+                        Notification::make()->success()->title('رجع الحساب للمتاح')->send();
+                    }),
+
                 Tables\Actions\EditAction::make()->label('تعديل'),
                 Tables\Actions\DeleteAction::make()
                     ->label('حذف')

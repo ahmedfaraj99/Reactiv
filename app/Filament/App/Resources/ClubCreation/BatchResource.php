@@ -97,6 +97,9 @@ class BatchResource extends Resource
                     ->label('الحالة')
                     ->state(function (Batch $r): string {
                         $done = $r->doneCount();
+                        if ($r->isClosed()) {
+                            return 'مغلقة';
+                        }
                         if ($r->opened_at === null) {
                             return 'لم يُفتح';
                         }
@@ -111,6 +114,9 @@ class BatchResource extends Resource
                     })
                     ->badge()
                     ->color(function (Batch $r): string {
+                        if ($r->isClosed()) {
+                            return 'info';
+                        }
                         if ($r->opened_at === null) {
                             return 'gray';
                         }
@@ -130,7 +136,8 @@ class BatchResource extends Resource
 
                 Tables\Columns\TextColumn::make('total')
                     ->label('الإجمالي')
-                    ->state(fn (Batch $r): string => number_format((float) $r->price_per_account * $r->account_count, 2)),
+                    ->state(fn (Batch $r): string => number_format($r->totalPrice(), 2))
+                    ->tooltip(fn (Batch $r): ?string => $r->isClosed() ? 'مغلقة — محسوبة على المنجز فقط' : null),
 
                 Tables\Columns\IconColumn::make('opened_at')
                     ->label('فُتح؟')
@@ -155,6 +162,9 @@ class BatchResource extends Resource
                 Tables\Columns\TextColumn::make('link_state')
                     ->label('الرابط')
                     ->state(function (Batch $r): string {
+                        if ($r->isClosed()) {
+                            return 'مغلق';
+                        }
                         if ($r->isRevoked()) {
                             return 'مُبطَل';
                         }
@@ -377,7 +387,62 @@ class BatchResource extends Resource
                     ->modalSubmitAction(false)
                     ->modalCancelActionLabel('إغلاق'),
 
+                Tables\Actions\Action::make('removeAccounts')
+                    ->label('إزالة حسابات')
+                    ->icon('heroicon-o-minus-circle')
+                    ->color('warning')
+                    ->visible(fn (Batch $r): bool => ! $r->isClosed()
+                        && $r->accounts()->where('status', Account::STATUS_ASSIGNED)->exists())
+                    ->modalHeading('إزالة حسابات من الرابط')
+                    ->modalDescription('للزبون الذي غيّر رأيه وطلب عدداً أقل. الحسابات المحددة تختفي من الرابط فوراً، وينقص العدد والإجمالي. الرابط يبقى يعمل بالباقي.')
+                    ->modalSubmitActionLabel('إزالة المحدد')
+                    ->form([
+                        Forms\Components\CheckboxList::make('account_ids')
+                            ->label('الحسابات غير المنجزة')
+                            ->options(fn (Batch $record): array => $record->accounts()
+                                ->where('status', Account::STATUS_ASSIGNED)
+                                ->orderBy('id')
+                                ->get()
+                                ->mapWithKeys(fn (Account $a): array => [
+                                    $a->id => $a->email.($a->wasTouched() ? ' — بدأ عليه (سيذهب للمراجعة)' : ''),
+                                ])
+                                ->all())
+                            ->required()
+                            ->bulkToggleable(),
+                    ])
+                    ->action(function (Batch $record, array $data): void {
+                        $ids = array_map('intval', (array) ($data['account_ids'] ?? []));
+                        $result = $record->releaseAccounts($ids, shrink: true);
+
+                        Notification::make()
+                            ->success()
+                            ->title('أُزيلت '.($result['available'] + $result['review']).' حسابات من الرابط')
+                            ->body(self::releaseSummary($result))
+                            ->send();
+                    }),
+
+                Tables\Actions\Action::make('closeBatch')
+                    ->label('إغلاق الدفعة')
+                    ->icon('heroicon-o-lock-closed')
+                    ->color('danger')
+                    ->visible(fn (Batch $r): bool => ! $r->isClosed())
+                    ->requiresConfirmation()
+                    ->modalHeading('إغلاق الدفعة')
+                    ->modalDescription(fn (Batch $r): string => 'الرابط يتوقف نهائياً. المنجز ('.$r->doneCount().' من '.$r->account_count.') يبقى ويُحسب عليه الإجمالي. '
+                        .'غير المنجز يخرج من الدفعة: ما لم يُولَّد عليه أي كود يرجع «متاح»، وما بدأ عليه يذهب إلى «يحتاج مراجعة».')
+                    ->modalSubmitActionLabel('إغلاق')
+                    ->action(function (Batch $record): void {
+                        $result = $record->close();
+
+                        Notification::make()
+                            ->success()
+                            ->title('أُغلقت الدفعة')
+                            ->body(self::releaseSummary($result))
+                            ->send();
+                    }),
+
                 Tables\Actions\Action::make('revoke')
+                    ->visible(fn (Batch $r): bool => ! $r->isClosed())
                     ->label(fn (Batch $r): string => $r->isRevoked() ? 'إلغاء الإبطال' : 'إبطال الرابط')
                     ->icon(fn (Batch $r): string => $r->isRevoked() ? 'heroicon-o-arrow-path' : 'heroicon-o-no-symbol')
                     ->color(fn (Batch $r): string => $r->isRevoked() ? 'success' : 'danger')
@@ -397,6 +462,7 @@ class BatchResource extends Resource
                     }),
 
                 Tables\Actions\Action::make('regenerateToken')
+                    ->visible(fn (Batch $r): bool => ! $r->isClosed())
                     ->label('إعادة توليد الرابط')
                     ->icon('heroicon-o-arrow-path')
                     ->color('warning')
@@ -444,6 +510,15 @@ class BatchResource extends Resource
                 ]),
             ])
             ->defaultSort('created_at', 'desc');
+    }
+
+    /**
+     * @param  array{available:int, review:int}  $result
+     */
+    protected static function releaseSummary(array $result): string
+    {
+        return "رجع للمتاح: {$result['available']} — يحتاج مراجعة: {$result['review']}"
+            .($result['review'] > 0 ? ' (من صفحة الحسابات)' : '');
     }
 
     protected static function exportDoneAccounts(Collection $records): StreamedResponse
