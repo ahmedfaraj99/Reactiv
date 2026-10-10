@@ -27,7 +27,11 @@
                     <td class="p-2" dir="ltr">{{ $acc->email }}</td>
                     <td class="p-2" dir="ltr">{{ $acc->password }}</td>
                     <td class="p-2" dir="ltr">{{ $acc->ea_password ?? '—' }}</td>
-                    <td class="p-2">{{ $acc->totp_generations }}/{{ $acc->totpAllowance() }}@if($acc->hasPendingTotpRequest()) <span class="text-warning-600">(طلب معلّق)</span>@endif</td>
+                    <td class="p-2" dir="ltr">
+                        {{ $batch->platformLabel() }} {{ $acc->totpUsed('console') }}/{{ $acc->totpAllowance('console') }}
+                        · EA {{ $acc->totpUsed('ea') }}/{{ $acc->totpAllowance('ea') }}
+                        @if($acc->hasPendingTotpRequest('console') || $acc->hasPendingTotpRequest('ea')) <span class="text-warning-600">(طلب معلّق)</span>@endif
+                    </td>
                     <td class="p-2">
                         @switch($acc->status)
                             @case('available') متاح @break

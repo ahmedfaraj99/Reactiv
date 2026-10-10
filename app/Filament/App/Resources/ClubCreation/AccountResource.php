@@ -136,7 +136,8 @@ class AccountResource extends Resource
 
                 Tables\Columns\TextColumn::make('totp_generations')
                     ->label('أكواد مولّدة')
-                    ->formatStateUsing(fn (Account $r): string => $r->totp_generations.'/'.$r->totpAllowance())
+                    ->formatStateUsing(fn (Account $r): string => $r->platformLabel().' '.$r->totpUsed(Account::KIND_CONSOLE).'/'.$r->totpAllowance(Account::KIND_CONSOLE)
+                        .' · EA '.$r->totpUsed(Account::KIND_EA).'/'.$r->totpAllowance(Account::KIND_EA))
                     ->toggleable(),
 
                 Tables\Columns\TextColumn::make('status')
@@ -299,9 +300,9 @@ class AccountResource extends Resource
     }
 
     /**
-     * Row = [EMAIL, PW, EA PW, GAUTH, EA GAUTH]. The console GAUTH is
-     * mandatory (the delivery link can't produce a code without it);
-     * the EA pair is stored when present. Seeds must be valid Base32.
+     * Row = [EMAIL, PW, EA PW, GAUTH, EA GAUTH]. Both GAUTH seeds are
+     * mandatory (the delivery link generates the console and EA codes);
+     * EA PW is stored when present. Seeds must be valid Base32.
      *
      * @param  iterable<array{0:string,1:string,2:string,3:string,4:string}> $rows
      * @return array{added:int,duplicates:int,skipped:int}
@@ -324,7 +325,7 @@ class AccountResource extends Resource
                 if ($email === '' || $password === '' || $seed === null
                     || ! filter_var($email, FILTER_VALIDATE_EMAIL)
                     || ! self::isValidBase32($seed)
-                    || ($eaSeed !== null && ! self::isValidBase32($eaSeed))) {
+                    || $eaSeed === null || ! self::isValidBase32($eaSeed)) {
                     $skipped++;
                     continue;
                 }
@@ -478,7 +479,7 @@ class AccountResource extends Resource
                 ['', '', '', '', ''],
                 ['• عبّئ الحسابات في الورقة الأولى (Accounts) فقط — كل صف = حساب واحد، ولا تغيّر صف العناوين.', '', '', '', ''],
                 ['• عند الرفع اختر المنصة: '.$label.'. لا تخلط حسابات منصتين في ملف واحد.', '', '', '', ''],
-                ['• EMAIL و PW و GAUTH إلزامية. EA PW و EA GAUTH اختيارية.', '', '', '', ''],
+                ['• EMAIL و PW و GAUTH و EA GAUTH إلزامية (رابط التسليم يولّد كود الكونسول وكود EA). EA PW اختياري.', '', '', '', ''],
                 ['• GAUTH = المفتاح السري للمصادقة (حروف A-Z وأرقام 2-7)، وليس الكود المكوّن من 6 أرقام.', '', '', '', ''],
                 ['• المسافات والأحرف الصغيرة في المفتاح مقبولة وتُنظَّف تلقائياً.', '', '', '', ''],
                 ['• إذا كان الرمز أرقاماً تبدأ بصفر، اجعل خلايا العمود بتنسيق "نص" قبل اللصق.', '', '', '', ''],

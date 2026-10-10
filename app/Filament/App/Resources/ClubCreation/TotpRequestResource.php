@@ -56,7 +56,9 @@ class TotpRequestResource extends Resource
 
         return parent::getEloquentQuery()
             ->when($tenantId, fn (Builder $q) => $q->where('tenant_id', $tenantId))
-            ->whereNotNull('totp_requested_at')
+            ->where(fn (Builder $q) => $q
+                ->whereNotNull('totp_requested_at')
+                ->orWhereNotNull('ea_totp_requested_at'))
             ->with('batch');
     }
 
@@ -88,60 +90,82 @@ class TotpRequestResource extends Resource
                     ->label('المستلم')
                     ->placeholder('—'),
 
-                Tables\Columns\TextColumn::make('totp_generations')
-                    ->label('الأكواد المولّدة')
-                    ->formatStateUsing(fn (Account $r): string => $r->totp_generations.'/'.$r->totpAllowance()),
+                Tables\Columns\TextColumn::make('requested_kinds')
+                    ->label('الطلب')
+                    ->badge()
+                    ->color('warning')
+                    ->state(fn (Account $r): array => collect(Account::TOTP_KINDS)
+                        ->filter(fn (string $k): bool => $r->hasPendingTotpRequest($k))
+                        ->map(fn (string $k): string => self::kindLabel($r, $k).' ('.$r->totpUsed($k).'/'.$r->totpAllowance($k).')')
+                        ->values()
+                        ->all()),
 
-                Tables\Columns\TextColumn::make('totp_requested_at')
+                Tables\Columns\TextColumn::make('requested_at')
                     ->label('وقت الطلب')
-                    ->since()
-                    ->sortable(),
+                    ->state(fn (Account $r) => collect([$r->totp_requested_at, $r->ea_totp_requested_at])->filter()->min())
+                    ->since(),
             ])
-            ->defaultSort('totp_requested_at', 'asc')
+            ->defaultSort(fn (Builder $q) => $q->orderByRaw('LEAST(totp_requested_at, ea_totp_requested_at)'))
             ->actions([
-                Tables\Actions\Action::make('approve')
-                    ->label('وافق على كود إضافي')
-                    ->icon('heroicon-o-key')
-                    ->color('primary')
-                    ->requiresConfirmation()
-                    ->modalDescription('سيُسمح بتوليد كود واحد إضافي لهذا الحساب من رابط التسليم.')
-                    ->action(function (Account $record): void {
-                        // Row lock so a double click can't grant two codes.
-                        $granted = DB::transaction(function () use ($record): bool {
-                            $locked = Account::query()->lockForUpdate()->find($record->id);
-                            if ($locked === null || $locked->totp_requested_at === null) {
-                                return false;
-                            }
-
-                            $locked->update([
-                                'totp_extra_allowed' => $locked->totp_extra_allowed + 1,
-                                'totp_requested_at'  => null,
-                            ]);
-
-                            return true;
-                        });
-
-                        if (! $granted) {
-                            Notification::make()->warning()->title('تمت معالجة هذا الطلب مسبقاً')->send();
-                            return;
-                        }
-
-                        Notification::make()->success()->title('تمت الموافقة — يقدر يولّد كوداً إضافياً الآن')->send();
-                    }),
+                self::approveAction(Account::KIND_CONSOLE),
+                self::approveAction(Account::KIND_EA),
 
                 Tables\Actions\Action::make('reject')
                     ->label('رفض')
                     ->icon('heroicon-o-x-mark')
                     ->color('danger')
                     ->requiresConfirmation()
+                    ->modalDescription('يُرفض كل طلب معلّق على هذا الحساب.')
                     ->action(function (Account $record): void {
-                        $record->update(['totp_requested_at' => null]);
+                        $record->update(['totp_requested_at' => null, 'ea_totp_requested_at' => null]);
 
                         Notification::make()->success()->title('رُفض الطلب')->send();
                     }),
             ])
             ->emptyStateIcon('heroicon-o-key')
             ->emptyStateHeading('لا توجد طلبات معلّقة');
+    }
+
+    protected static function kindLabel(Account $r, string $kind): string
+    {
+        return $kind === Account::KIND_EA ? 'كود EA' : 'كود '.$r->platformLabel();
+    }
+
+    protected static function approveAction(string $kind): Tables\Actions\Action
+    {
+        $requested = Account::totpColumn($kind, 'totp_requested_at');
+        $extra     = Account::totpColumn($kind, 'totp_extra_allowed');
+
+        return Tables\Actions\Action::make('approve_'.$kind)
+            ->label(fn (Account $r): string => 'وافق على '.self::kindLabel($r, $kind))
+            ->icon('heroicon-o-key')
+            ->color('primary')
+            ->visible(fn (Account $r): bool => $r->hasPendingTotpRequest($kind))
+            ->requiresConfirmation()
+            ->modalDescription('سيُسمح بتوليد كود واحد إضافي لهذا الحساب من رابط التسليم.')
+            ->action(function (Account $record) use ($requested, $extra): void {
+                // Row lock so a double click can't grant two codes.
+                $granted = DB::transaction(function () use ($record, $requested, $extra): bool {
+                    $locked = Account::query()->lockForUpdate()->find($record->id);
+                    if ($locked === null || $locked->{$requested} === null) {
+                        return false;
+                    }
+
+                    $locked->update([
+                        $extra     => (int) $locked->{$extra} + 1,
+                        $requested => null,
+                    ]);
+
+                    return true;
+                });
+
+                if (! $granted) {
+                    Notification::make()->warning()->title('تمت معالجة هذا الطلب مسبقاً')->send();
+                    return;
+                }
+
+                Notification::make()->success()->title('تمت الموافقة — يقدر يولّد كوداً إضافياً الآن')->send();
+            });
     }
 
     public static function getPages(): array

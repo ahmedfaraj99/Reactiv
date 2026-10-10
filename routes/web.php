@@ -72,14 +72,14 @@ Route::middleware('web')->group(function (): void {
     Route::post('/cc/{token}/done/{account}', [ClubCreationDeliveryController::class, 'markDone'])
         ->name('club-creation.done');
 
-    // Console TOTP on the public link — capped per account like the
-    // activation page; past the cap the worker asks the owner for more.
-    Route::middleware('throttle:30,1')->group(function (): void {
-        Route::post('/cc/{token}/totp/{account}', [ClubCreationDeliveryController::class, 'totp'])
+    // Console + EA TOTP on the public link — each capped per account
+    // like the activation page; past the cap the worker asks the owner.
+    Route::middleware('throttle:30,1')->where(['kind' => 'console|ea'])->group(function (): void {
+        Route::post('/cc/{token}/totp/{account}/{kind}', [ClubCreationDeliveryController::class, 'totp'])
             ->name('club-creation.totp');
-        Route::post('/cc/{token}/totp-request/{account}', [ClubCreationDeliveryController::class, 'requestTotp'])
+        Route::post('/cc/{token}/totp-request/{account}/{kind}', [ClubCreationDeliveryController::class, 'requestTotp'])
             ->name('club-creation.totp-request');
-        Route::get('/cc/{token}/totp-status/{account}', [ClubCreationDeliveryController::class, 'totpStatus'])
+        Route::get('/cc/{token}/totp-status/{account}/{kind}', [ClubCreationDeliveryController::class, 'totpStatus'])
             ->name('club-creation.totp-status');
     });
 });

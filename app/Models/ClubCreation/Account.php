@@ -46,9 +46,16 @@ class Account extends Model
     ];
 
     /**
-     * Same base allowance as an activation's console (PSN) code — one
-     * code per account; anything beyond needs the owner's approval.
+     * Two codes the worker can generate: the console sign-in (PSN or
+     * Xbox) and EA (Ultimate Team asks for it). Each has the same base
+     * allowance as activation — one code — and its own owner-approved
+     * extras. Columns are the same name with an `ea_` prefix for EA.
      */
+    public const KIND_CONSOLE = 'console';
+    public const KIND_EA      = 'ea';
+
+    public const TOTP_KINDS = [self::KIND_CONSOLE, self::KIND_EA];
+
     public const TOTP_BASE_LIMIT = 1;
 
     protected $table = 'club_creation_accounts';
@@ -58,6 +65,7 @@ class Account extends Model
         'ea_backup_code', 'psn_backup_code',
         'status', 'batch_id', 'done_at', 'exported_at',
         'totp_generations', 'totp_extra_allowed', 'totp_requested_at', 'first_totp_at',
+        'ea_totp_generations', 'ea_totp_extra_allowed', 'ea_totp_requested_at',
     ];
 
     protected $hidden = ['totp_seed', 'ea_totp_seed'];
@@ -73,6 +81,9 @@ class Account extends Model
             'totp_extra_allowed' => 'integer',
             'totp_requested_at'  => 'datetime',
             'first_totp_at'      => 'datetime',
+            'ea_totp_generations'   => 'integer',
+            'ea_totp_extra_allowed' => 'integer',
+            'ea_totp_requested_at'  => 'datetime',
         ];
     }
 
@@ -81,24 +92,42 @@ class Account extends Model
         return self::PLATFORMS[$this->platform] ?? $this->platform;
     }
 
-    public function hasTotp(): bool
+    /** Column name for a TOTP field of the given kind (EA = `ea_` prefix). */
+    public static function totpColumn(string $kind, string $field): string
     {
-        return $this->totp_seed !== null && $this->totp_seed !== '';
+        return ($kind === self::KIND_EA ? 'ea_' : '').$field;
     }
 
-    public function totpAllowance(): int
+    public function totpSeedFor(string $kind = self::KIND_CONSOLE): ?string
     {
-        return self::TOTP_BASE_LIMIT + $this->totp_extra_allowed;
+        return $this->{self::totpColumn($kind, 'totp_seed')};
     }
 
-    public function canGenerateTotp(): bool
+    public function hasTotp(string $kind = self::KIND_CONSOLE): bool
     {
-        return $this->totp_generations < $this->totpAllowance();
+        $seed = $this->totpSeedFor($kind);
+
+        return $seed !== null && $seed !== '';
     }
 
-    public function hasPendingTotpRequest(): bool
+    public function totpUsed(string $kind = self::KIND_CONSOLE): int
     {
-        return $this->totp_requested_at !== null;
+        return (int) $this->{self::totpColumn($kind, 'totp_generations')};
+    }
+
+    public function totpAllowance(string $kind = self::KIND_CONSOLE): int
+    {
+        return self::TOTP_BASE_LIMIT + (int) $this->{self::totpColumn($kind, 'totp_extra_allowed')};
+    }
+
+    public function canGenerateTotp(string $kind = self::KIND_CONSOLE): bool
+    {
+        return $this->totpUsed($kind) < $this->totpAllowance($kind);
+    }
+
+    public function hasPendingTotpRequest(string $kind = self::KIND_CONSOLE): bool
+    {
+        return $this->{self::totpColumn($kind, 'totp_requested_at')} !== null;
     }
 
     public function tenant(): BelongsTo

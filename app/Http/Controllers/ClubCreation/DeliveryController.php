@@ -65,28 +65,28 @@ class DeliveryController extends Controller
     }
 
     /**
-     * Same gate as the activation page's console code: one code per
-     * account (TOTP_BASE_LIMIT) plus whatever the owner approved. The
-     * check-then-increment runs under a row lock so two taps (or two
-     * open tabs) can't both spend the last allowance.
+     * Same gate as the activation page: one code per account per kind
+     * (console / EA) plus whatever the owner approved. The check-then-
+     * increment runs under a row lock so two taps (or two open tabs)
+     * can't both spend the last allowance.
      */
-    public function totp(Request $request, string $token, int $accountId, TotpService $totp): JsonResponse
+    public function totp(Request $request, string $token, int $accountId, string $kind, TotpService $totp): JsonResponse
     {
         $account = $this->liveAccount($token, $accountId);
 
-        if ($blocked = $this->blockedReason($account)) {
+        if ($blocked = $this->blockedReason($account, $kind)) {
             return $blocked;
         }
 
-        $granted = DB::transaction(function () use ($account): bool {
+        $granted = DB::transaction(function () use ($account, $kind): bool {
             $locked = Account::query()->lockForUpdate()->find($account->id);
-            if ($locked === null || ! $locked->canGenerateTotp()) {
+            if ($locked === null || ! $locked->canGenerateTotp($kind)) {
                 return false;
             }
 
             $locked->update([
-                'totp_generations' => $locked->totp_generations + 1,
-                'first_totp_at'    => $locked->first_totp_at ?? now(),
+                Account::totpColumn($kind, 'totp_generations') => $locked->totpUsed($kind) + 1,
+                'first_totp_at' => $locked->first_totp_at ?? now(),
             ]);
 
             return true;
@@ -94,15 +94,15 @@ class DeliveryController extends Controller
         $account->refresh();
 
         if (! $granted) {
-            return response()->json(['error' => 'limit'] + $this->totpState($account), 429);
+            return response()->json(['error' => 'limit'] + $this->totpState($account, $kind), 429);
         }
 
-        $code = $totp->currentCode((string) $account->totp_seed)['code'];
+        $code = $totp->currentCode((string) $account->totpSeedFor($kind))['code'];
 
         return response()->json([
             'code'    => $code,
             'seconds' => (int) config('fc27ac.totp_display_seconds'),
-        ] + $this->totpState($account));
+        ] + $this->totpState($account, $kind));
     }
 
     /**
@@ -110,38 +110,39 @@ class DeliveryController extends Controller
      * ping them in the panel bell. Idempotent: a second tap while a
      * request is pending neither re-stamps the time nor re-notifies.
      */
-    public function requestTotp(Request $request, string $token, int $accountId): JsonResponse
+    public function requestTotp(Request $request, string $token, int $accountId, string $kind): JsonResponse
     {
         $account = $this->liveAccount($token, $accountId);
 
-        if ($blocked = $this->blockedReason($account)) {
+        if ($blocked = $this->blockedReason($account, $kind)) {
             return $blocked;
         }
 
-        if ($account->canGenerateTotp()) {
-            return response()->json($this->totpState($account));
+        if ($account->canGenerateTotp($kind)) {
+            return response()->json($this->totpState($account, $kind));
         }
 
+        $column = Account::totpColumn($kind, 'totp_requested_at');
         $flagged = Account::query()
             ->whereKey($account->id)
-            ->whereNull('totp_requested_at')
-            ->update(['totp_requested_at' => now()]);
+            ->whereNull($column)
+            ->update([$column => now()]);
         $account->refresh();
 
         if ($flagged > 0) {
-            $this->notifyOwners($account);
+            $this->notifyOwners($account, $kind);
         }
 
-        return response()->json($this->totpState($account));
+        return response()->json($this->totpState($account, $kind));
     }
 
     /**
      * Polled by the public page while a request is pending so the button
      * flips back to "generate" as soon as the owner approves.
      */
-    public function totpStatus(Request $request, string $token, int $accountId): JsonResponse
+    public function totpStatus(Request $request, string $token, int $accountId, string $kind): JsonResponse
     {
-        return response()->json($this->totpState($this->liveAccount($token, $accountId)));
+        return response()->json($this->totpState($this->liveAccount($token, $accountId), $kind));
     }
 
     private function liveAccount(string $token, int $accountId): Account
@@ -161,7 +162,7 @@ class DeliveryController extends Controller
      * Emergency freeze stops code generation here too, same as the
      * activation page — the public link is the riskier surface.
      */
-    private function blockedReason(Account $account): ?JsonResponse
+    private function blockedReason(Account $account, string $kind): ?JsonResponse
     {
         if ($account->tenant?->isFrozen()) {
             return response()->json(['error' => 'frozen', 'message' => 'النظام متوقف مؤقتاً. حاول لاحقاً.'], 423);
@@ -171,7 +172,7 @@ class DeliveryController extends Controller
             return response()->json(['error' => 'done', 'message' => 'هذا الحساب مكتمل.'], 409);
         }
 
-        if (! $account->hasTotp()) {
+        if (! $account->hasTotp($kind)) {
             return response()->json(['error' => 'no_seed', 'message' => 'لا يوجد كود TOTP لهذا الحساب — تواصل معنا.'], 409);
         }
 
@@ -181,17 +182,17 @@ class DeliveryController extends Controller
     /**
      * @return array{used:int, allowance:int, can_generate:bool, pending:bool}
      */
-    private function totpState(Account $account): array
+    private function totpState(Account $account, string $kind): array
     {
         return [
-            'used'         => $account->totp_generations,
-            'allowance'    => $account->totpAllowance(),
-            'can_generate' => $account->canGenerateTotp(),
-            'pending'      => $account->hasPendingTotpRequest(),
+            'used'         => $account->totpUsed($kind),
+            'allowance'    => $account->totpAllowance($kind),
+            'can_generate' => $account->canGenerateTotp($kind),
+            'pending'      => $account->hasPendingTotpRequest($kind),
         ];
     }
 
-    private function notifyOwners(Account $account): void
+    private function notifyOwners(Account $account, string $kind): void
     {
         $owners = User::query()
             ->where('tenant_id', $account->tenant_id)
@@ -206,7 +207,7 @@ class DeliveryController extends Controller
 
         $notification = Notification::make()
             ->warning()
-            ->title('طلب كود TOTP إضافي — إنشاء الحسابات')
+            ->title('طلب كود '.($kind === Account::KIND_EA ? 'EA' : $account->platformLabel()).' إضافي — إنشاء الحسابات')
             ->body('حساب '.$account->email.' — المستلم: '.($account->batch?->recipient ?? '—'));
 
         if ($account->tenant !== null) {
