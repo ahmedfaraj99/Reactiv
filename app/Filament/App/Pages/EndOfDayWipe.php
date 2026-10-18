@@ -145,13 +145,16 @@ class EndOfDayWipe extends Page
             $handle = fopen('php://output', 'w');
             // UTF-8 BOM so Excel opens Arabic correctly.
             fwrite($handle, "\xEF\xBB\xBF");
-            fputcsv($handle, ['email', 'ea_email', 'activated_at', 'employee']);
+            fputcsv($handle, ['email', 'ea_email', 'activated_at', 'employee', 'order_type']);
             foreach ($accounts as $account) {
                 fputcsv($handle, [
                     $account->email,
                     $account->ea_email,
                     optional($account->assignment?->completed_at)->toDateTimeString(),
                     $account->assignment?->employee?->name,
+                    $account->requiresMatches()
+                        ? "تفعيل + {$account->matches_required} مباريات"
+                        : 'تفعيل فقط',
                 ]);
             }
             fclose($handle);

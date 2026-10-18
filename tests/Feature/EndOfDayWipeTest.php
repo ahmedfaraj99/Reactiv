@@ -154,6 +154,46 @@ class EndOfDayWipeTest extends TestCase
         $this->assertStringNotContainsString('PsnPw!1', $csv, 'CSV must NOT include the password');
     }
 
+    public function test_csv_marks_each_account_as_matches_or_activation_only(): void
+    {
+        $tenant = $this->makeTenant();
+        $office = $this->makeOffice($tenant);
+        $owner = $this->makeUser($tenant, UserRole::TenantOwner);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $office);
+
+        $client = Client::create(['tenant_id' => $tenant->id, 'name' => 'العميل ٢']);
+        foreach (['matches@example.com' => 3, 'plain@example.com' => 0] as $email => $matches) {
+            $account = $this->makeAccount($tenant, [
+                'client_id'        => $client->id,
+                'email'            => $email,
+                'matches_required' => $matches,
+            ]);
+            $this->makeAssignment($tenant, $account, $employee, [
+                'status'       => AccountAssignment::STATUS_COMPLETED,
+                'completed_at' => now(),
+            ]);
+        }
+
+        $this->actingAsTenantUser($owner);
+
+        $reflection = new \ReflectionMethod(EndOfDayWipe::class, 'streamCsv');
+        $reflection->setAccessible(true);
+        $response = $reflection->invoke(new EndOfDayWipe(), $client->id);
+
+        ob_start();
+        $response->sendContent();
+        $lines = array_values(array_filter(explode("\n", (string) ob_get_clean())));
+
+        $this->assertStringEndsWith('order_type', trim($lines[0]));
+        $byEmail = [];
+        foreach (array_slice($lines, 1) as $line) {
+            $row = str_getcsv(trim($line));
+            $byEmail[$row[0]] = end($row);
+        }
+        $this->assertSame('تفعيل + 3 مباريات', $byEmail['matches@example.com']);
+        $this->assertSame('تفعيل فقط', $byEmail['plain@example.com']);
+    }
+
     public function test_wipe_ignores_accounts_belonging_to_a_different_client(): void
     {
         $tenant = $this->makeTenant();
