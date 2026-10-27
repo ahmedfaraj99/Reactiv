@@ -59,6 +59,9 @@ class DistributeAccounts extends Page implements HasForms
     /** Per-request memo of clientStock(), keyed by kind. @var array<string,array> */
     protected array $clientStockMemo = [];
 
+    /** Per-request memo of releasable(). @var array<int,array{unopened:int,stuck:int,stuck_since:?string}>|null */
+    protected ?array $releasableMemo = null;
+
     /**
      * The owner only uploads batches (see AccountResource's import
      * action) — distribution to employees is entirely the manager's
@@ -208,6 +211,132 @@ class DistributeAccounts extends Page implements HasForms
                 return AccountResource::clientLabel($id)." ({$cnt})";
             })
             ->implode('، ');
+    }
+
+    /**
+     * What "release" would send back to the stock, per employee.
+     *
+     * @return array<int,array{unopened:int,stuck:int,stuck_since:?string}>
+     */
+    public function releasable(): array
+    {
+        return $this->releasableMemo ??= AccountResource::releasableAssignments(array_keys(AccountResource::employeeOptions()))
+            ->selectRaw('employee_id,
+                sum(case when credentials_revealed_at is null then 1 else 0 end) as unopened,
+                sum(case when credentials_revealed_at is not null then 1 else 0 end) as stuck,
+                min(credentials_revealed_at) as stuck_since')
+            ->groupBy('employee_id')
+            ->get()
+            ->mapWithKeys(fn ($r): array => [(int) $r->employee_id => [
+                'unopened'    => (int) $r->unopened,
+                'stuck'       => (int) $r->stuck,
+                'stuck_since' => $r->stuck > 0 ? (string) $r->stuck_since : null,
+            ]])
+            ->all();
+    }
+
+    private static function releasableText(array $r): string
+    {
+        $parts = [];
+        if ($r['unopened'] > 0) {
+            $parts[] = "{$r['unopened']} غير مفتوح";
+        }
+        if ($r['stuck'] > 0) {
+            $parts[] = "{$r['stuck']} عالق منذ ".\Illuminate\Support\Carbon::parse($r['stuck_since'])->diffForHumans(syntax: \Carbon\CarbonInterface::DIFF_ABSOLUTE);
+        }
+
+        return implode('، ', $parts);
+    }
+
+    /**
+     * Employees who can't take the picked client right now, with what
+     * releasing them would send back.
+     *
+     * @return array<int,array{id:int,name:string,status:string,releasable:string,can_release:bool}>
+     */
+    public function blockedEmployees(): array
+    {
+        $clientKey = (string) ($this->data['client'] ?? '');
+        if ($clientKey === '') {
+            return [];
+        }
+
+        return collect(AccountResource::employeeOptions())
+            ->reject(fn (string $name, int $id): bool => $this->canReceive($id, $clientKey))
+            ->map(function (string $name, int $id): array {
+                $r = $this->releasable()[$id] ?? null;
+
+                return [
+                    'id'          => $id,
+                    'name'        => $name,
+                    'status'      => $this->employeeStatus($id),
+                    'releasable'  => $r !== null ? self::releasableText($r) : '',
+                    'can_release' => $r !== null,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function resetMemos(): void
+    {
+        $this->employeeClientsMemo = null;
+        $this->clientStockMemo = [];
+        $this->releasableMemo = null;
+    }
+
+    private function releaseNotice(array $done): void
+    {
+        $total = $done['unopened'] + $done['stuck'];
+
+        Notification::make()
+            ->status($total > 0 ? 'success' : 'warning')
+            ->title($total > 0 ? "أُرجع {$total} حساباً إلى المخزون" : 'لا يوجد ما يُرجع')
+            ->body($total > 0 ? "{$done['unopened']} غير مفتوح، {$done['stuck']} عالق (مفتوح منذ أكثر من ".AccountResource::STUCK_AFTER_HOURS.' ساعة).' : null)
+            ->send();
+    }
+
+    public function releaseEmployeeAction(): Action
+    {
+        return Action::make('releaseEmployee')
+            ->label('تحرير')
+            ->icon('heroicon-m-arrow-uturn-left')
+            ->color('warning')
+            ->size('sm')
+            ->requiresConfirmation()
+            ->modalHeading(fn (array $arguments): string => 'تحرير '.(User::find((int) ($arguments['employee'] ?? 0))?->name ?? 'الموظف'))
+            ->modalDescription(function (array $arguments): string {
+                $r = $this->releasable()[(int) ($arguments['employee'] ?? 0)] ?? null;
+
+                return $r === null
+                    ? 'لا يوجد لديه ما يُرجع.'
+                    : 'سيرجع إلى المخزون: '.self::releasableText($r).'. الحسابات المفتوحة خلال آخر '.AccountResource::STUCK_AFTER_HOURS.' ساعة والمُعادة لتصحيح الإثبات تبقى معه.';
+            })
+            ->action(function (array $arguments): void {
+                $this->releaseNotice(AccountResource::releaseToStock([(int) ($arguments['employee'] ?? 0)]));
+                $this->resetMemos();
+            });
+    }
+
+    public function releaseAllAction(): Action
+    {
+        return Action::make('releaseAll')
+            ->label('تحرير كل الموظفين')
+            ->icon('heroicon-o-arrow-uturn-left')
+            ->color('warning')
+            ->outlined()
+            ->requiresConfirmation()
+            ->modalDescription(function (): string {
+                $unopened = array_sum(array_column($this->releasable(), 'unopened'));
+                $stuck = array_sum(array_column($this->releasable(), 'stuck'));
+
+                return "سيرجع إلى المخزون من كل الموظفين: {$unopened} غير مفتوح، و{$stuck} عالق (مفتوح منذ أكثر من "
+                    .AccountResource::STUCK_AFTER_HOURS.' ساعة ولم يكتمل). الحسابات المفتوحة حديثاً والمُعادة لتصحيح الإثبات تبقى مع أصحابها.';
+            })
+            ->action(function (): void {
+                $this->releaseNotice(AccountResource::releaseToStock(array_keys(AccountResource::employeeOptions())));
+                $this->resetMemos();
+            });
     }
 
     public function form(\Filament\Forms\Form $form): \Filament\Forms\Form
@@ -457,8 +586,7 @@ class DistributeAccounts extends Page implements HasForms
 
                 // Stay on the same kind — managers usually hand out one
                 // kind in several rounds. Move on to the oldest client left.
-                $this->employeeClientsMemo = null;
-                $this->clientStockMemo = [];
+                $this->resetMemos();
                 $this->form->fill([
                     'matches_type' => $type,
                     'client'       => array_key_exists($clientKey, $this->clientStock($type)) ? $clientKey : array_key_first($this->clientStock($type)),

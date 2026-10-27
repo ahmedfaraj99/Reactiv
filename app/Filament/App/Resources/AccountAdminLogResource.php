@@ -77,6 +77,7 @@ class AccountAdminLogResource extends Resource
                         AccountAdminLog::ACTION_ARCHIVED             => 'أُرشف',
                         AccountAdminLog::ACTION_UNARCHIVED           => 'أُعيد من الأرشيف',
                         AccountAdminLog::ACTION_PERMANENTLY_DELETED  => 'مُسح نهائياً',
+                        AccountAdminLog::ACTION_RELEASED_TO_STOCK    => 'أُرجع للمخزون',
                         default                                      => $state,
                     }),
 
@@ -98,6 +99,7 @@ class AccountAdminLogResource extends Resource
                         AccountAdminLog::ACTION_ARCHIVED             => 'أُرشف',
                         AccountAdminLog::ACTION_UNARCHIVED           => 'أُعيد من الأرشيف',
                         AccountAdminLog::ACTION_PERMANENTLY_DELETED  => 'مُسح نهائياً',
+                        AccountAdminLog::ACTION_RELEASED_TO_STOCK    => 'أُرجع للمخزون',
                     ]),
             ])
             ->defaultSort('created_at', 'desc')

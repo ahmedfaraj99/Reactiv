@@ -1265,13 +1265,6 @@ class AccountResource extends Resource
     }
 
     /**
-     * Wrap the reassignment in a single transaction — the unique constraint
-     * on account_assignments.account_id guards against a race where two
-     * supervisors assign the same account at once.
-     *
-     * @param  \Illuminate\Support\Collection<int,Account>  $accounts
-     */
-    /**
      * Assignment statuses that still keep an account on the employee's
      * console. While any of these is open the employee is "locked" to
      * that account's client.
@@ -1338,6 +1331,89 @@ class AccountResource extends Resource
         return null;
     }
 
+    /** Opened but not finished for this long = abandoned, not being worked on. */
+    public const STUCK_AFTER_HOURS = 48;
+
+    /**
+     * Assignments that can go back to the stock without touching work in
+     * progress: never opened (credentials not revealed yet), or opened
+     * more than STUCK_AFTER_HOURS ago and left there. Recently opened
+     * ones and proofs sent back for fixing stay with the employee.
+     *
+     * @param  array<int,int>  $employeeIds
+     */
+    public static function releasableAssignments(array $employeeIds): Builder
+    {
+        $cutoff = now()->subHours(self::STUCK_AFTER_HOURS);
+
+        return AccountAssignment::query()
+            ->where('tenant_id', filament()->getTenant()?->id ?? 0)
+            ->whereIn('employee_id', $employeeIds)
+            ->where(fn (Builder $q) => $q
+                ->where(fn (Builder $q) => $q
+                    ->where('status', AccountAssignment::STATUS_PENDING)
+                    ->whereNull('credentials_revealed_at'))
+                ->orWhere(fn (Builder $q) => $q
+                    ->where('status', AccountAssignment::STATUS_IN_PROGRESS)
+                    ->whereNull('rejection_reason')
+                    ->where('credentials_revealed_at', '<', $cutoff)));
+    }
+
+    /**
+     * Send an employee's unopened and abandoned accounts back to the
+     * stock of the manager who owns them, so the employee is free for a
+     * new client and the accounts can be handed out again cleanly.
+     *
+     * @param  array<int,int>  $employeeIds
+     * @return array{unopened: int, stuck: int}
+     */
+    public static function releaseToStock(array $employeeIds): array
+    {
+        $employeeIds = array_values(array_filter($employeeIds, fn (int $id): bool => self::isValidAssignmentTarget($id)));
+        $done = ['unopened' => 0, 'stuck' => 0];
+        $actorId = (int) auth()->id();
+
+        DB::transaction(function () use ($employeeIds, &$done, $actorId): void {
+            // Re-select under lock: an employee opening an account right
+            // now flips it to in-progress and it must stay with them.
+            $assignments = self::releasableAssignments($employeeIds)
+                ->with('account')
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($assignments as $assignment) {
+                $account = $assignment->account;
+                $done[$assignment->credentials_revealed_at === null ? 'unopened' : 'stuck']++;
+
+                $assignment->delete();
+
+                if ($account === null) {
+                    continue;
+                }
+
+                $account->update(['status' => 'available']);
+
+                \App\Models\AccountAdminLog::create([
+                    'tenant_id'            => $account->tenant_id,
+                    'actor_id'             => $actorId,
+                    'account_id'           => $account->id,
+                    'account_email_masked' => self::maskEmail($account->email),
+                    'action'               => \App\Models\AccountAdminLog::ACTION_RELEASED_TO_STOCK,
+                    'created_at'           => now(),
+                ]);
+            }
+        });
+
+        return $done;
+    }
+
+    /**
+     * Wrap the reassignment in a single transaction — the unique constraint
+     * on account_assignments.account_id guards against a race where two
+     * supervisors assign the same account at once.
+     *
+     * @param  \Illuminate\Support\Collection<int,Account>  $accounts
+     */
     public static function assignAccounts($accounts, int $employeeId): void
     {
         $supervisor = auth()->user();

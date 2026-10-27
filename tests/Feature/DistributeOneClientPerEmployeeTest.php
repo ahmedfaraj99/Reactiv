@@ -210,6 +210,85 @@ class DistributeOneClientPerEmployeeTest extends TestCase
         $this->assertSame('assigned', $fresh->fresh()->status);
     }
 
+    private function held($tenant, $manager, $employee, Client $client, array $assignment): Account
+    {
+        $a = $this->account($tenant, $manager, $client, 90);
+        $a->update(['status' => 'assigned']);
+        $this->makeAssignment($tenant, $a, $employee, $assignment);
+
+        return $a;
+    }
+
+    public function test_release_returns_unopened_and_abandoned_accounts_only(): void
+    {
+        [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
+
+        $unopened = $this->held($tenant, $manager, $employee, $clientB, ['status' => AccountAssignment::STATUS_PENDING]);
+        $stuck = $this->held($tenant, $manager, $employee, $clientB, [
+            'status' => AccountAssignment::STATUS_IN_PROGRESS, 'credentials_revealed_at' => now()->subHours(49),
+        ]);
+        $working = $this->held($tenant, $manager, $employee, $clientB, [
+            'status' => AccountAssignment::STATUS_IN_PROGRESS, 'credentials_revealed_at' => now()->subHours(47),
+        ]);
+        $sentBack = $this->held($tenant, $manager, $employee, $clientB, [
+            'status' => AccountAssignment::STATUS_IN_PROGRESS, 'credentials_revealed_at' => now()->subDays(5),
+            'rejection_reason' => 'صورة غير واضحة',
+        ]);
+        $review = $this->held($tenant, $manager, $employee, $clientB, [
+            'status' => AccountAssignment::STATUS_AWAITING_REVIEW, 'credentials_revealed_at' => now()->subDays(5),
+        ]);
+
+        $this->actingAsTenantUser($manager);
+
+        Livewire::test(DistributeAccounts::class)
+            ->callAction('releaseEmployee', arguments: ['employee' => $employee->id]);
+
+        $this->assertSame('available', $unopened->fresh()->status);
+        $this->assertSame('available', $stuck->fresh()->status);
+        $this->assertNull($unopened->fresh()->assignment);
+        $this->assertSame($manager->id, $stuck->fresh()->manager_id);
+
+        foreach ([$working, $sentBack, $review] as $kept) {
+            $this->assertSame('assigned', $kept->fresh()->status);
+            $this->assertSame($employee->id, $kept->fresh()->assignment->employee_id);
+        }
+
+        $this->assertSame(2, \App\Models\AccountAdminLog::where('action', \App\Models\AccountAdminLog::ACTION_RELEASED_TO_STOCK)->count());
+    }
+
+    public function test_released_employee_can_take_a_new_client(): void
+    {
+        [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
+
+        $this->held($tenant, $manager, $employee, $clientB, ['status' => AccountAssignment::STATUS_PENDING]);
+        $a = $this->account($tenant, $manager, $clientA, 200);
+
+        $this->actingAsTenantUser($manager);
+
+        Livewire::test(DistributeAccounts::class)
+            ->callAction('releaseAll');
+
+        $this->distribute($clientA, [['employee_id' => $employee->id, 'count' => 1]]);
+
+        $this->assertSame([$clientA->id], $this->clientsOf($employee->id));
+        $this->assertSame('assigned', $a->fresh()->status);
+    }
+
+    public function test_page_lists_blocked_employees_with_what_release_would_return(): void
+    {
+        [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
+
+        $this->held($tenant, $manager, $employee, $clientB, ['status' => AccountAssignment::STATUS_PENDING]);
+        $this->account($tenant, $manager, $clientA, 200);
+
+        $this->actingAsTenantUser($manager);
+
+        Livewire::test(DistributeAccounts::class)
+            ->fillForm(['matches_type' => 'activation', 'client' => 'c'.$clientA->id])
+            ->assertSee('موظفون لا يمكنهم استلام هذا العميل الآن (1)')
+            ->assertSee('قابل للتحرير: 1 غير مفتوح');
+    }
+
     public function test_bulk_reassign_allows_a_client_the_mixed_employee_already_holds(): void
     {
         [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
