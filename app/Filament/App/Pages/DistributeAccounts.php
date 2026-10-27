@@ -53,7 +53,7 @@ class DistributeAccounts extends Page implements HasForms
     /** @var array<string,mixed> */
     public ?array $data = [];
 
-    /** Per-request memo of employeeClients(). @var array<int,array<string,int>>|null */
+    /** Per-request memo of employeeClients(). @var array<int,array<string,array{matches:int,activation:int}>>|null */
     protected ?array $employeeClientsMemo = null;
 
     /** Per-request memo of clientStock(), keyed by kind. @var array<string,array> */
@@ -163,9 +163,10 @@ class DistributeAccounts extends Page implements HasForms
 
     /**
      * Open (pending / in-progress) accounts per client for every employee
-     * this user may distribute to: employee_id => [client key => count].
+     * this user may distribute to, split by kind:
+     * employee_id => [client key => ['matches' => n, 'activation' => n]].
      *
-     * @return array<int,array<string,int>>
+     * @return array<int,array<string,array{matches:int,activation:int}>>
      */
     public function employeeClients(): array
     {
@@ -179,12 +180,17 @@ class DistributeAccounts extends Page implements HasForms
             ->whereIn('account_assignments.employee_id', array_keys(AccountResource::employeeOptions()))
             ->whereIn('account_assignments.status', AccountResource::CLIENT_LOCK_STATUSES)
             ->whereNull('accounts.deleted_at')
-            ->selectRaw('account_assignments.employee_id, accounts.client_id, count(*) as cnt')
+            ->selectRaw('account_assignments.employee_id, accounts.client_id,
+                sum(case when accounts.matches_required > 0 then 1 else 0 end) as matches,
+                sum(case when accounts.matches_required > 0 then 0 else 1 end) as activation')
             ->groupBy('account_assignments.employee_id', 'accounts.client_id')
             ->get()
             ->each(function ($row) use (&$map): void {
                 $clientId = $row->client_id === null ? null : (int) $row->client_id;
-                $map[(int) $row->employee_id][self::clientKey($clientId)] = (int) $row->cnt;
+                $map[(int) $row->employee_id][self::clientKey($clientId)] = [
+                    'matches'    => (int) $row->matches,
+                    'activation' => (int) $row->activation,
+                ];
             });
 
         return $this->employeeClientsMemo = $map;
@@ -205,10 +211,18 @@ class DistributeAccounts extends Page implements HasForms
             return 'حر';
         }
 
+        // Spell out the kind: the lock is per console, not per kind, so a
+        // manager on the activation tab can see someone held by match
+        // accounts and must not read them as activation ones.
         return 'يعمل على '.collect($open)
-            ->map(function (int $cnt, string $key): string {
+            ->map(function (array $kinds, string $key): string {
                 [, $id] = self::parseClientKey($key);
-                return AccountResource::clientLabel($id)." ({$cnt})";
+                $parts = array_filter([
+                    $kinds['matches'] > 0 ? "{$kinds['matches']} بمباريات" : null,
+                    $kinds['activation'] > 0 ? "{$kinds['activation']} تفعيل فقط" : null,
+                ]);
+
+                return AccountResource::clientLabel($id).': '.implode(' + ', $parts);
             })
             ->implode('، ');
     }

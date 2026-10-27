@@ -100,9 +100,25 @@ class DistributeOneClientPerEmployeeTest extends TestCase
             ->fillForm(['matches_type' => 'activation'])
             ->assertOk()
             ->assertSee('C01 — 1 متاح')
-            ->assertSee($employee->name.' — يعمل على C02 (1)')
+            ->assertSee($employee->name.' — يعمل على C02: 1 تفعيل فقط')
             ->assertSee($free->name.' — حر')
             ->assertDontSee('>A<', false);
+    }
+
+    public function test_employee_holding_match_accounts_is_shown_as_such_on_the_activation_tab(): void
+    {
+        [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
+
+        $held = $this->makeAccount($tenant, ['manager_id' => $manager->id, 'client_id' => $clientB->id, 'matches_required' => 3, 'status' => 'assigned']);
+        $this->makeAssignment($tenant, $held, $employee);
+        $this->account($tenant, $manager, $clientA, 50);
+
+        $this->actingAsTenantUser($manager);
+
+        Livewire::test(DistributeAccounts::class)
+            ->fillForm(['matches_type' => 'activation'])
+            ->assertSee($employee->name.' — يعمل على C02: 1 بمباريات')
+            ->assertDontSee($employee->name.' — يعمل على C02: 1 تفعيل فقط');
     }
 
     public function test_the_oldest_waiting_client_is_picked_by_default(): void
@@ -287,6 +303,26 @@ class DistributeOneClientPerEmployeeTest extends TestCase
             ->fillForm(['matches_type' => 'activation', 'client' => 'c'.$clientA->id])
             ->assertSee('موظفون لا يمكنهم استلام هذا العميل الآن (1)')
             ->assertSee('قابل للتحرير: 1 غير مفتوح');
+    }
+
+    public function test_page_shows_how_long_stuck_accounts_have_been_open(): void
+    {
+        [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
+
+        $this->held($tenant, $manager, $employee, $clientB, [
+            'status' => AccountAssignment::STATUS_IN_PROGRESS, 'credentials_revealed_at' => now()->subDays(12),
+        ]);
+        $this->account($tenant, $manager, $clientA, 200);
+
+        $this->actingAsTenantUser($manager);
+        app()->setLocale('ar');
+
+        Livewire::test(DistributeAccounts::class)
+            ->fillForm(['matches_type' => 'activation', 'client' => 'c'.$clientA->id])
+            ->assertSee('قابل للتحرير: 1 عالق منذ')
+            ->mountAction('releaseAll')
+            ->assertActionMounted('releaseAll')
+            ->assertSee('0 غير مفتوح، و1 عالق');
     }
 
     public function test_bulk_reassign_allows_a_client_the_mixed_employee_already_holds(): void
