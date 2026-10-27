@@ -30,6 +30,10 @@ use Illuminate\Support\Facades\DB;
  * many available accounts (oldest first) for each employee in one submit.
  * Counts don't have to be equal.
  *
+ * Each employee only ever holds ONE client's accounts at a time — mixing
+ * customers on one console risks a chain lock — so an employee may get
+ * fewer than asked when their client runs short.
+ *
  * Every distribution is for ONE kind of account (matches or activation
  * only) — employees work the two kinds differently, so the manager picks
  * the kind first and every count on the page refers to that pool.
@@ -212,7 +216,7 @@ class DistributeAccounts extends Page implements HasForms
             ->icon('heroicon-o-check-circle')
             ->color('primary')
             ->requiresConfirmation()
-            ->modalDescription(fn (): string => 'سيُخصَّص العدد المحدد من حسابات «'.$this->selectedMatchesTypeLabel().'» المتاحة (الأقدم رفعاً أولاً) لكل موظف مباشرة.')
+            ->modalDescription(fn (): string => 'سيُخصَّص العدد المحدد من حسابات «'.$this->selectedMatchesTypeLabel().'» المتاحة (الأقدم رفعاً أولاً) لكل موظف مباشرة. كل موظف يستلم حسابات عميل واحد فقط، فقد يستلم أقل من المطلوب إن لم يكفِ رصيد عميله.')
             ->action(function (): void {
                 $state = $this->form->getState();
                 $rows = $state['rows'] ?? [];
@@ -240,33 +244,81 @@ class DistributeAccounts extends Page implements HasForms
                 $tenantId = filament()->getTenant()->id;
                 $managerId = self::scopedManagerId();
                 $summary = [];
+                $short = false;
 
-                DB::transaction(function () use ($rows, $tenantId, $managerId, $type, &$summary): void {
+                DB::transaction(function () use ($rows, $tenantId, $managerId, $type, &$summary, &$short): void {
                     foreach ($rows as $row) {
                         $employeeId = (int) $row['employee_id'];
                         $count = (int) $row['count'];
+                        $name = User::find($employeeId)?->name ?? '#'.$employeeId;
 
-                        $accounts = Account::query()
+                        $pool = fn () => Account::query()
                             ->where('tenant_id', $tenantId)
                             ->where('manager_id', $managerId)
                             ->where('status', 'available')
-                            ->ofMatchesType($type)
+                            ->ofMatchesType($type);
+
+                        // Never add a new client to an employee's console:
+                        // with open work, only clients they already hold
+                        // qualify (one of them per round); otherwise start
+                        // on the client whose accounts have waited longest.
+                        $open = AccountResource::openClientIds($employeeId);
+                        $oldest = $pool()
+                            ->when($open->isNotEmpty(), fn ($q) => $q->where(function ($q) use ($open): void {
+                                $ids = $open->filter(fn (?int $c): bool => $c !== null)->all();
+                                $q->whereIn('client_id', $ids);
+                                if ($open->contains(null)) {
+                                    $q->orWhereNull('client_id');
+                                }
+                            }))
                             ->orderBy('created_at')
+                            ->orderBy('id')
+                            ->first();
+
+                        if ($oldest === null) {
+                            $short = true;
+                            $summary[] = $open->isEmpty()
+                                ? "{$name}: 0/{$count}"
+                                : "{$name}: 0/{$count} (لا متاح من عملائه الحاليين: ".$open->map(fn (?int $c): string => AccountResource::clientLabel($c))->implode('، ').')';
+                            continue;
+                        }
+                        $clientId = $oldest->client_id === null ? null : (int) $oldest->client_id;
+
+                        $accounts = $pool()
+                            ->when(
+                                $clientId === null,
+                                fn ($q) => $q->whereNull('client_id'),
+                                fn ($q) => $q->where('client_id', $clientId),
+                            )
+                            ->orderBy('created_at')
+                            ->orderBy('id')
                             ->lockForUpdate()
                             ->limit($count)
                             ->get();
 
+                        $label = AccountResource::clientLabel($clientId);
+
+                        if ($accounts->isEmpty()) {
+                            $short = true;
+                            $summary[] = "{$name}: 0/{$count} (لا متاح لعميله الحالي «{$label}»)";
+                            continue;
+                        }
+
                         AccountResource::assignAccounts($accounts, $employeeId);
 
-                        $employee = User::find($employeeId);
-                        $summary[] = ($employee?->name ?? '#'.$employeeId).': '.$accounts->count();
+                        $got = $accounts->count();
+                        $short = $short || $got < $count;
+                        $summary[] = "{$name}: ".($got < $count ? "{$got}/{$count}" : $got)." «{$label}»";
                     }
                 });
 
                 Notification::make()
-                    ->success()
-                    ->title("اكتمل توزيع حسابات «{$typeLabel}»")
+                    ->status($short ? 'warning' : 'success')
+                    ->title($short
+                        ? "اكتمل توزيع «{$typeLabel}» جزئياً — بعض الموظفين استلموا أقل من المطلوب حتى لا تُخلط العملاء"
+                        : "اكتمل توزيع حسابات «{$typeLabel}»")
                     ->body(implode(' — ', $summary))
+                    ->persistent($short)
                     ->send();
 
                 // Stay on the same kind — managers usually hand out one

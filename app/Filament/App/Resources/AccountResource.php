@@ -818,6 +818,19 @@ class AccountResource extends Resource
                                 return;
                             }
 
+                            // One client per employee (chain-lock risk) —
+                            // check every target before moving anything.
+                            $targets = ($data['mode'] ?? 'single') === 'single'
+                                ? [(int) $data['employee_id']]
+                                : array_values(array_map('intval', $data['employee_ids'] ?? []));
+                            foreach ($targets as $targetId) {
+                                $conflict = self::clientConflict($movable, $targetId);
+                                if ($conflict !== null) {
+                                    Notification::make()->danger()->title('لا يمكن خلط العملاء')->body($conflict)->send();
+                                    return;
+                                }
+                            }
+
                             $summary = [];
 
                             if (($data['mode'] ?? 'single') === 'single') {
@@ -1258,6 +1271,73 @@ class AccountResource extends Resource
      *
      * @param  \Illuminate\Support\Collection<int,Account>  $accounts
      */
+    /**
+     * Assignment statuses that still keep an account on the employee's
+     * console. While any of these is open the employee is "locked" to
+     * that account's client.
+     */
+    public const CLIENT_LOCK_STATUSES = [
+        AccountAssignment::STATUS_PENDING,
+        AccountAssignment::STATUS_IN_PROGRESS,
+    ];
+
+    /**
+     * Client ids the employee still has open work for (null stands for
+     * accounts uploaded without a client). Signing several customers'
+     * accounts into one console invites a chain lock — when EA bans one,
+     * the others linked through that console go with it — so an employee
+     * only ever holds one client's accounts at a time.
+     *
+     * @param  array<int,int>  $exceptAccountIds  accounts being moved right now
+     * @return \Illuminate\Support\Collection<int,?int>
+     */
+    public static function openClientIds(int $employeeId, array $exceptAccountIds = []): \Illuminate\Support\Collection
+    {
+        return Account::query()
+            ->join('account_assignments', 'account_assignments.account_id', '=', 'accounts.id')
+            ->where('account_assignments.employee_id', $employeeId)
+            ->whereIn('account_assignments.status', self::CLIENT_LOCK_STATUSES)
+            ->when($exceptAccountIds !== [], fn (Builder $q) => $q->whereNotIn('accounts.id', $exceptAccountIds))
+            ->distinct()
+            ->pluck('accounts.client_id')
+            ->map(fn ($id): ?int => $id === null ? null : (int) $id)
+            ->values();
+    }
+
+    public static function clientLabel(?int $clientId): string
+    {
+        return $clientId === null ? 'بدون عميل' : (\App\Models\Client::find($clientId)?->name ?? '#'.$clientId);
+    }
+
+    /**
+     * Why these accounts can't go to this employee without mixing
+     * clients, or null when they can.
+     */
+    public static function clientConflict($accounts, int $employeeId): ?string
+    {
+        $clients = collect($accounts)
+            ->map(fn (Account $a): ?int => $a->client_id === null ? null : (int) $a->client_id)
+            ->unique()
+            ->values();
+
+        if ($clients->count() > 1) {
+            return 'الحسابات المحددة تخص أكثر من عميل — حدد حسابات عميل واحد فقط في كل مرة.';
+        }
+
+        $target = $clients->first();
+        // More of a client already on the console adds no new link, so
+        // that's fine even for an employee left holding several clients
+        // from before this rule — only a client they don't hold is refused.
+        $open = self::openClientIds($employeeId, collect($accounts)->pluck('id')->all());
+
+        if ($open->isNotEmpty() && ! $open->contains(fn (?int $c): bool => $c === $target)) {
+            $name = User::find($employeeId)?->name ?? '#'.$employeeId;
+            return "لدى {$name} حسابات معلّقة لعميل آخر — لا يمكن خلط العملاء لنفس الموظف حتى ينهيها.";
+        }
+
+        return null;
+    }
+
     public static function assignAccounts($accounts, int $employeeId): void
     {
         $supervisor = auth()->user();
@@ -1271,6 +1351,11 @@ class AccountResource extends Resource
         // Otherwise a hand-crafted request would let a supervisor in tenant
         // A hand credentials to a user in tenant B (see #1 in the audit).
         abort_unless(self::isValidAssignmentTarget($employeeId), 403);
+
+        // Callers check first to show a friendly message; this is the
+        // backstop so no path can mix clients on one console.
+        $conflict = self::clientConflict($accounts, $employeeId);
+        abort_if($conflict !== null, 422, (string) $conflict);
 
         DB::transaction(function () use ($accounts, $employeeId, $supervisor, $tenantId): void {
             foreach ($accounts as $account) {
