@@ -75,7 +75,7 @@ class ClientCodeTest extends TestCase
 
         $notifications = new \Filament\Notifications\Livewire\Notifications;
         $notifications->mount();
-        $bodies = $notifications->notifications->map(fn ($n): string => (string) $n->getBody())->implode(' ');
+        $bodies = $notifications->notifications->map(fn ($n): string => $n->getTitle().' '.$n->getBody())->implode(' ');
         $this->assertStringContainsString('C01', $bodies);
         $this->assertStringNotContainsString('اسم سري', $bodies);
     }

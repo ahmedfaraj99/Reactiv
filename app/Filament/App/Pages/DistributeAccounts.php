@@ -6,9 +6,11 @@ namespace App\Filament\App\Pages;
 
 use App\Filament\App\Resources\AccountResource;
 use App\Models\Account;
+use App\Models\AccountAssignment;
 use App\Models\User;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Hidden;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
@@ -24,19 +26,17 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Fast bulk distribution for managers/supervisors handling
- * thousands of accounts at once: pick every employee you want to give
- * accounts to in one searchable multi-select, then just fill in a count
- * next to each name. No adding rows one by one. The system claims that
- * many available accounts (oldest first) for each employee in one submit.
- * Counts don't have to be equal.
+ * thousands of accounts at once — what you see is what happens:
+ *
+ *  1. pick the kind (matches / activation only),
+ *  2. pick a client from the stock cards (shown by code, never by name),
+ *  3. pick employees and a count for each.
  *
  * Each employee only ever holds ONE client's accounts at a time — mixing
- * customers on one console risks a chain lock — so an employee may get
- * fewer than asked when their client runs short.
- *
- * Every distribution is for ONE kind of account (matches or activation
- * only) — employees work the two kinds differently, so the manager picks
- * the kind first and every count on the page refers to that pool.
+ * customers on one console risks a chain lock — so employees still busy
+ * with another client are shown as such and can't be picked. Counts are
+ * checked against that client's stock up front, so nobody silently gets
+ * fewer than the manager typed.
  */
 class DistributeAccounts extends Page implements HasForms
 {
@@ -52,6 +52,12 @@ class DistributeAccounts extends Page implements HasForms
 
     /** @var array<string,mixed> */
     public ?array $data = [];
+
+    /** Per-request memo of employeeClients(). @var array<int,array<string,int>>|null */
+    protected ?array $employeeClientsMemo = null;
+
+    /** Per-request memo of clientStock(), keyed by kind. @var array<string,array> */
+    protected array $clientStockMemo = [];
 
     /**
      * The owner only uploads batches (see AccountResource's import
@@ -91,7 +97,117 @@ class DistributeAccounts extends Page implements HasForms
 
     public function mount(): void
     {
-        $this->form->fill();
+        $this->form->fill([
+            'matches_type' => 'matches',
+            'client'       => array_key_first($this->clientStock('matches')),
+        ]);
+    }
+
+    /** Form key for a client — ToggleButtons need string keys, and null is a real group. */
+    private static function clientKey(?int $clientId): string
+    {
+        return $clientId === null ? 'none' : 'c'.$clientId;
+    }
+
+    /** @return array{0: bool, 1: ?int} [valid, clientId] */
+    private static function parseClientKey(?string $key): array
+    {
+        if ($key === 'none') {
+            return [true, null];
+        }
+        if (is_string($key) && preg_match('/^c(\d+)$/', $key, $m)) {
+            return [true, (int) $m[1]];
+        }
+
+        return [false, null];
+    }
+
+    private function poolQuery(string $type)
+    {
+        return Account::query()
+            ->where('tenant_id', filament()->getTenant()->id)
+            ->where('manager_id', self::scopedManagerId())
+            ->where('status', 'available')
+            ->ofMatchesType($type);
+    }
+
+    /**
+     * Available stock of one kind per client, the client whose accounts
+     * have waited longest first.
+     *
+     * @return array<string,array{client_id: ?int, label: string, count: int}>
+     */
+    public function clientStock(?string $type = null): array
+    {
+        $type ??= $this->selectedMatchesType();
+
+        return $this->clientStockMemo[$type] ??= $this->poolQuery($type)
+            ->selectRaw('client_id, count(*) as cnt, min(created_at) as oldest')
+            ->groupBy('client_id')
+            ->orderBy('oldest')
+            ->get()
+            ->mapWithKeys(function ($row): array {
+                $id = $row->client_id === null ? null : (int) $row->client_id;
+
+                return [self::clientKey($id) => [
+                    'client_id' => $id,
+                    'label'     => AccountResource::clientLabel($id),
+                    'count'     => (int) $row->cnt,
+                ]];
+            })
+            ->all();
+    }
+
+    /**
+     * Open (pending / in-progress) accounts per client for every employee
+     * this user may distribute to: employee_id => [client key => count].
+     *
+     * @return array<int,array<string,int>>
+     */
+    public function employeeClients(): array
+    {
+        if ($this->employeeClientsMemo !== null) {
+            return $this->employeeClientsMemo;
+        }
+
+        $map = [];
+        AccountAssignment::query()
+            ->join('accounts', 'accounts.id', '=', 'account_assignments.account_id')
+            ->whereIn('account_assignments.employee_id', array_keys(AccountResource::employeeOptions()))
+            ->whereIn('account_assignments.status', AccountResource::CLIENT_LOCK_STATUSES)
+            ->whereNull('accounts.deleted_at')
+            ->selectRaw('account_assignments.employee_id, accounts.client_id, count(*) as cnt')
+            ->groupBy('account_assignments.employee_id', 'accounts.client_id')
+            ->get()
+            ->each(function ($row) use (&$map): void {
+                $clientId = $row->client_id === null ? null : (int) $row->client_id;
+                $map[(int) $row->employee_id][self::clientKey($clientId)] = (int) $row->cnt;
+            });
+
+        return $this->employeeClientsMemo = $map;
+    }
+
+    /** Free, or already working on this same client. */
+    private function canReceive(int $employeeId, string $clientKey): bool
+    {
+        $open = $this->employeeClients()[$employeeId] ?? [];
+
+        return $open === [] || array_key_exists($clientKey, $open);
+    }
+
+    private function employeeStatus(int $employeeId): string
+    {
+        $open = $this->employeeClients()[$employeeId] ?? [];
+        if ($open === []) {
+            return 'حر';
+        }
+
+        return 'يعمل على '.collect($open)
+            ->map(function (int $cnt, string $key): string {
+                [, $id] = self::parseClientKey($key);
+                return AccountResource::clientLabel($id)." ({$cnt})";
+            })
+            ->implode('، ');
     }
 
     public function form(\Filament\Forms\Form $form): \Filament\Forms\Form
@@ -99,7 +215,7 @@ class DistributeAccounts extends Page implements HasForms
         return $form
             ->schema([
                 ToggleButtons::make('matches_type')
-                    ->label('نوع الحسابات المراد توزيعها')
+                    ->label('1) نوع الحسابات')
                     ->options(fn (): array => [
                         'matches'    => 'حسابات بمباريات ('.$this->availableCount('matches').' متاح)',
                         'activation' => 'تفعيل فقط ('.$this->availableCount('activation').' متاح)',
@@ -115,16 +231,46 @@ class DistributeAccounts extends Page implements HasForms
                     ->inline()
                     ->required()
                     ->live()
-                    ->default('matches'),
+                    ->default('matches')
+                    ->afterStateUpdated(function (?string $state, Set $set): void {
+                        $set('client', array_key_first($this->clientStock($state === 'activation' ? 'activation' : 'matches')));
+                        $set('employee_ids', []);
+                        $set('rows', []);
+                    }),
+
+                ToggleButtons::make('client')
+                    ->label('2) اختر العميل من المخزون')
+                    ->helperText('الأقدم انتظاراً أولاً. يُعرض كل عميل برمزه.')
+                    ->options(fn (): array => collect($this->clientStock())
+                        ->map(fn (array $s): string => "{$s['label']} — {$s['count']} متاح")
+                        ->all())
+                    ->inline()
+                    ->required()
+                    ->live()
+                    ->visible(fn (): bool => $this->clientStock() !== [])
+                    ->afterStateUpdated(function (Set $set): void {
+                        // Who may receive depends on the client — start over.
+                        $set('employee_ids', []);
+                        $set('rows', []);
+                    }),
+
+                Placeholder::make('empty_stock')
+                    ->hiddenLabel()
+                    ->content('لا توجد حسابات متاحة من هذا النوع حالياً.')
+                    ->visible(fn (): bool => $this->clientStock() === []),
 
                 Select::make('employee_ids')
-                    ->label('اختر الموظفين')
-                    ->helperText('اختر كل من تريد توزيع حسابات عليه دفعة واحدة — لا حاجة لإضافتهم واحداً تلو الآخر.')
+                    ->label('3) اختر الموظفين')
+                    ->helperText('الموظف الذي يعمل على عميل آخر يظهر معطّلاً حتى ينهي حساباته — لمنع خلط العملاء على جهاز واحد.')
                     ->multiple()
                     ->searchable()
                     ->native(false)
-                    ->options(fn () => AccountResource::employeeOptions())
+                    ->options(fn (): array => collect(AccountResource::employeeOptions())
+                        ->map(fn (string $name, int $id): string => "{$name} — ".$this->employeeStatus($id))
+                        ->all())
+                    ->disableOptionWhen(fn (string $value, Get $get): bool => ! $this->canReceive((int) $value, (string) $get('client')))
                     ->live()
+                    ->visible(fn (Get $get): bool => filled($get('client')) && $this->clientStock() !== [])
                     ->afterStateUpdated(function (?array $state, Set $set, Get $get): void {
                         $existing = collect($get('rows') ?? [])->keyBy('employee_id');
                         $ids = $state ?? [];
@@ -179,10 +325,16 @@ class DistributeAccounts extends Page implements HasForms
         return $this->selectedMatchesType() === 'matches' ? 'بمباريات' : 'تفعيل فقط';
     }
 
+    /** Stock of the client picked on the form, 0 when none / gone. */
+    private function selectedClientCount(): int
+    {
+        return $this->clientStock()[$this->data['client'] ?? '']['count'] ?? 0;
+    }
+
     public function equalizeAction(): Action
     {
         return Action::make('equalize')
-            ->label('وزّع بالتساوي على المُختارين')
+            ->label('وزّع رصيد العميل بالتساوي على المُختارين')
             ->color('gray')
             ->action(function (): void {
                 $rows = $this->form->getState()['rows'] ?? [];
@@ -193,7 +345,7 @@ class DistributeAccounts extends Page implements HasForms
                     return;
                 }
 
-                $available = $this->availableCount($this->selectedMatchesType());
+                $available = $this->selectedClientCount();
                 $share = intdiv($available, $employeeCount);
                 $remainder = $available % $employeeCount;
 
@@ -203,6 +355,7 @@ class DistributeAccounts extends Page implements HasForms
 
                 $this->form->fill([
                     'matches_type' => $this->selectedMatchesType(),
+                    'client'       => $this->data['client'] ?? null,
                     'employee_ids' => array_column($rows, 'employee_id'),
                     'rows'         => $rows,
                 ]);
@@ -216,7 +369,13 @@ class DistributeAccounts extends Page implements HasForms
             ->icon('heroicon-o-check-circle')
             ->color('primary')
             ->requiresConfirmation()
-            ->modalDescription(fn (): string => 'سيُخصَّص العدد المحدد من حسابات «'.$this->selectedMatchesTypeLabel().'» المتاحة (الأقدم رفعاً أولاً) لكل موظف مباشرة. كل موظف يستلم حسابات عميل واحد فقط، فقد يستلم أقل من المطلوب إن لم يكفِ رصيد عميله.')
+            ->modalDescription(function (): string {
+                $total = array_sum(array_map('intval', array_column($this->data['rows'] ?? [], 'count')));
+                [, $clientId] = self::parseClientKey($this->data['client'] ?? null);
+
+                return "سيُخصَّص {$total} حساباً من حسابات «".$this->selectedMatchesTypeLabel().'» للعميل '
+                    .AccountResource::clientLabel($clientId).' (الأقدم رفعاً أولاً)، كل موظف بالعدد المكتوب أمامه.';
+            })
             ->action(function (): void {
                 $state = $this->form->getState();
                 $rows = $state['rows'] ?? [];
@@ -228,63 +387,51 @@ class DistributeAccounts extends Page implements HasForms
 
                 $type = $state['matches_type'] === 'activation' ? 'activation' : 'matches';
                 $typeLabel = $type === 'matches' ? 'بمباريات' : 'تفعيل فقط';
+                $clientKey = (string) ($state['client'] ?? '');
+                [$valid, $clientId] = self::parseClientKey($clientKey);
+                $label = AccountResource::clientLabel($clientId);
 
-                $totalRequested = array_sum(array_column($rows, 'count'));
-                $available = $this->availableCount($type);
+                if (! $valid) {
+                    Notification::make()->warning()->title('اختر العميل أولاً')->send();
+                    return;
+                }
+
+                $totalRequested = array_sum(array_map('intval', array_column($rows, 'count')));
+                $available = $this->clientStock($type)[$clientKey]['count'] ?? 0;
 
                 if ($totalRequested > $available) {
                     Notification::make()
                         ->danger()
-                        ->title('العدد المطلوب أكبر من المتاح')
-                        ->body("طلبت {$totalRequested}، والمتاح فعلياً من حسابات «{$typeLabel}» {$available} فقط.")
+                        ->title('العدد المطلوب أكبر من رصيد العميل')
+                        ->body("طلبت {$totalRequested}، والمتاح للعميل {$label} من حسابات «{$typeLabel}» {$available} فقط.")
                         ->send();
                     return;
                 }
 
-                $tenantId = filament()->getTenant()->id;
-                $managerId = self::scopedManagerId();
-                $summary = [];
-                $short = false;
+                // Re-check on the server — the page may be stale, and the
+                // disabled options are only a hint to the browser.
+                $this->employeeClientsMemo = null;
+                $blocked = collect($rows)
+                    ->map(fn (array $row): int => (int) $row['employee_id'])
+                    ->reject(fn (int $id): bool => $this->canReceive($id, $clientKey))
+                    ->map(fn (int $id): string => (User::find($id)?->name ?? '#'.$id).' ('.$this->employeeStatus($id).')');
 
-                DB::transaction(function () use ($rows, $tenantId, $managerId, $type, &$summary, &$short): void {
+                if ($blocked->isNotEmpty()) {
+                    Notification::make()
+                        ->danger()
+                        ->title('موظفون يعملون على عميل آخر')
+                        ->body('لا يمكن إعطاؤهم حسابات '.$label.' حتى ينهوا ما لديهم: '.$blocked->implode('، '))
+                        ->send();
+                    return;
+                }
+
+                $summary = [];
+
+                DB::transaction(function () use ($rows, $type, $clientId, &$summary): void {
                     foreach ($rows as $row) {
                         $employeeId = (int) $row['employee_id'];
-                        $count = (int) $row['count'];
-                        $name = User::find($employeeId)?->name ?? '#'.$employeeId;
 
-                        $pool = fn () => Account::query()
-                            ->where('tenant_id', $tenantId)
-                            ->where('manager_id', $managerId)
-                            ->where('status', 'available')
-                            ->ofMatchesType($type);
-
-                        // Never add a new client to an employee's console:
-                        // with open work, only clients they already hold
-                        // qualify (one of them per round); otherwise start
-                        // on the client whose accounts have waited longest.
-                        $open = AccountResource::openClientIds($employeeId);
-                        $oldest = $pool()
-                            ->when($open->isNotEmpty(), fn ($q) => $q->where(function ($q) use ($open): void {
-                                $ids = $open->filter(fn (?int $c): bool => $c !== null)->all();
-                                $q->whereIn('client_id', $ids);
-                                if ($open->contains(null)) {
-                                    $q->orWhereNull('client_id');
-                                }
-                            }))
-                            ->orderBy('created_at')
-                            ->orderBy('id')
-                            ->first();
-
-                        if ($oldest === null) {
-                            $short = true;
-                            $summary[] = $open->isEmpty()
-                                ? "{$name}: 0/{$count}"
-                                : "{$name}: 0/{$count} (لا متاح من عملائه الحاليين: ".$open->map(fn (?int $c): string => AccountResource::clientLabel($c))->implode('، ').')';
-                            continue;
-                        }
-                        $clientId = $oldest->client_id === null ? null : (int) $oldest->client_id;
-
-                        $accounts = $pool()
+                        $accounts = $this->poolQuery($type)
                             ->when(
                                 $clientId === null,
                                 fn ($q) => $q->whereNull('client_id'),
@@ -293,37 +440,29 @@ class DistributeAccounts extends Page implements HasForms
                             ->orderBy('created_at')
                             ->orderBy('id')
                             ->lockForUpdate()
-                            ->limit($count)
+                            ->limit((int) $row['count'])
                             ->get();
-
-                        $label = AccountResource::clientLabel($clientId);
-
-                        if ($accounts->isEmpty()) {
-                            $short = true;
-                            $summary[] = "{$name}: 0/{$count} (لا متاح لعميله الحالي «{$label}»)";
-                            continue;
-                        }
 
                         AccountResource::assignAccounts($accounts, $employeeId);
 
-                        $got = $accounts->count();
-                        $short = $short || $got < $count;
-                        $summary[] = "{$name}: ".($got < $count ? "{$got}/{$count}" : $got)." «{$label}»";
+                        $summary[] = (User::find($employeeId)?->name ?? '#'.$employeeId).': '.$accounts->count();
                     }
                 });
 
                 Notification::make()
-                    ->status($short ? 'warning' : 'success')
-                    ->title($short
-                        ? "اكتمل توزيع «{$typeLabel}» جزئياً — بعض الموظفين استلموا أقل من المطلوب حتى لا تُخلط العملاء"
-                        : "اكتمل توزيع حسابات «{$typeLabel}»")
+                    ->success()
+                    ->title("اكتمل توزيع حسابات «{$typeLabel}» للعميل {$label}")
                     ->body(implode(' — ', $summary))
-                    ->persistent($short)
                     ->send();
 
                 // Stay on the same kind — managers usually hand out one
-                // kind in several rounds.
-                $this->form->fill(['matches_type' => $type]);
+                // kind in several rounds. Move on to the oldest client left.
+                $this->employeeClientsMemo = null;
+                $this->clientStockMemo = [];
+                $this->form->fill([
+                    'matches_type' => $type,
+                    'client'       => array_key_exists($clientKey, $this->clientStock($type)) ? $clientKey : array_key_first($this->clientStock($type)),
+                ]);
             });
     }
 }

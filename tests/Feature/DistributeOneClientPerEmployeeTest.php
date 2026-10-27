@@ -16,7 +16,7 @@ use Tests\TestCase;
 /**
  * Mixing several customers' accounts on one employee's console risks a
  * chain lock, so an employee only ever holds one client's accounts at a
- * time — even if that means receiving fewer than asked.
+ * time. The manager picks the client from the stock and sees who is free.
  */
 class DistributeOneClientPerEmployeeTest extends TestCase
 {
@@ -40,11 +40,23 @@ class DistributeOneClientPerEmployeeTest extends TestCase
         return $a;
     }
 
-    private function distribute(array $rows): void
+    private function hold($tenant, $manager, $employee, Client $client, string $status = AccountAssignment::STATUS_PENDING): void
     {
-        Livewire::test(DistributeAccounts::class)
-            ->fillForm([
-                'matches_type' => 'activation',
+        $held = $this->account($tenant, $manager, $client, 90);
+        $held->update(['status' => 'assigned']);
+        $this->makeAssignment($tenant, $held, $employee, ['status' => $status]);
+    }
+
+    /** @param array<int,array{employee_id:int,count:int}> $rows */
+    private function distribute(?Client $client, array $rows)
+    {
+        $form = ['matches_type' => 'activation'];
+        if ($client !== null) {
+            $form['client'] = 'c'.$client->id;
+        }
+
+        return Livewire::test(DistributeAccounts::class)
+            ->fillForm($form + [
                 'employee_ids' => array_column($rows, 'employee_id'),
                 'rows'         => $rows,
             ])
@@ -54,111 +66,132 @@ class DistributeOneClientPerEmployeeTest extends TestCase
     private function clientsOf(int $employeeId): array
     {
         return Account::whereIn('id', AccountAssignment::where('employee_id', $employeeId)->pluck('account_id'))
-            ->pluck('client_id')->unique()->values()->all();
+            ->pluck('client_id')->unique()->sort()->values()->all();
     }
 
-    public function test_employee_gets_only_the_oldest_client_even_if_short(): void
+    public function test_stock_is_grouped_by_client_oldest_waiting_first(): void
+    {
+        [$tenant, $manager, , , $clientA, $clientB] = $this->setUpPool();
+
+        $this->account($tenant, $manager, $clientB, 50);
+        $this->account($tenant, $manager, $clientA, 40);
+        $this->account($tenant, $manager, $clientA, 30);
+
+        $this->actingAsTenantUser($manager);
+        $page = Livewire::test(DistributeAccounts::class)->instance();
+
+        $stock = $page->clientStock('activation');
+        $this->assertSame(['c'.$clientB->id, 'c'.$clientA->id], array_keys($stock));
+        $this->assertSame(2, $stock['c'.$clientA->id]['count']);
+        $this->assertSame('C01', $stock['c'.$clientA->id]['label']);
+    }
+
+    public function test_page_shows_stock_by_code_and_who_is_busy(): void
+    {
+        [$tenant, $manager, $office, $employee, $clientA, $clientB] = $this->setUpPool();
+        $free = $this->makeUser($tenant, UserRole::Employee, $office);
+
+        $this->hold($tenant, $manager, $employee, $clientB);
+        $this->account($tenant, $manager, $clientA, 50);
+
+        $this->actingAsTenantUser($manager);
+
+        Livewire::test(DistributeAccounts::class)
+            ->fillForm(['matches_type' => 'activation'])
+            ->assertOk()
+            ->assertSee('C01 — 1 متاح')
+            ->assertSee($employee->name.' — يعمل على C02 (1)')
+            ->assertSee($free->name.' — حر')
+            ->assertDontSee('>A<', false);
+    }
+
+    public function test_the_oldest_waiting_client_is_picked_by_default(): void
     {
         [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
 
-        // Interleaved by upload time — oldest-first alone would mix them.
+        // Interleaved by upload time — a client-blind pick would mix them.
         $this->account($tenant, $manager, $clientA, 50);
         $this->account($tenant, $manager, $clientB, 40);
         $this->account($tenant, $manager, $clientA, 30);
-        $this->account($tenant, $manager, $clientB, 20);
 
         $this->actingAsTenantUser($manager);
-        $this->distribute([['employee_id' => $employee->id, 'count' => 3]]);
+        $this->distribute(null, [['employee_id' => $employee->id, 'count' => 2]]);
 
+        $this->assertSame([$clientA->id], $this->clientsOf($employee->id));
         $this->assertSame(2, AccountAssignment::where('employee_id', $employee->id)->count());
-        $this->assertSame([$clientA->id], $this->clientsOf($employee->id));
     }
 
-    public function test_second_employee_moves_on_to_the_next_client(): void
-    {
-        [$tenant, $manager, $office, $employee, $clientA, $clientB] = $this->setUpPool();
-        $second = $this->makeUser($tenant, UserRole::Employee, $office);
-
-        $this->account($tenant, $manager, $clientA, 50);
-        $this->account($tenant, $manager, $clientB, 40);
-        $this->account($tenant, $manager, $clientB, 30);
-
-        $this->actingAsTenantUser($manager);
-        $this->distribute([
-            ['employee_id' => $employee->id, 'count' => 1],
-            ['employee_id' => $second->id, 'count' => 2],
-        ]);
-
-        $this->assertSame([$clientA->id], $this->clientsOf($employee->id));
-        $this->assertSame([$clientB->id], $this->clientsOf($second->id));
-        $this->assertSame(2, AccountAssignment::where('employee_id', $second->id)->count());
-    }
-
-    public function test_employee_with_open_work_stays_on_that_client(): void
+    public function test_distribution_takes_only_the_picked_client(): void
     {
         [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
 
-        $held = $this->account($tenant, $manager, $clientB, 90);
-        $held->update(['status' => 'assigned']);
-        $this->makeAssignment($tenant, $held, $employee, ['status' => AccountAssignment::STATUS_PENDING]);
-
         $this->account($tenant, $manager, $clientA, 50);
         $this->account($tenant, $manager, $clientB, 40);
 
         $this->actingAsTenantUser($manager);
-        $this->distribute([['employee_id' => $employee->id, 'count' => 1]]);
+        $this->distribute($clientB, [['employee_id' => $employee->id, 'count' => 1]]);
 
         $this->assertSame([$clientB->id], $this->clientsOf($employee->id));
-        $this->assertSame(2, AccountAssignment::where('employee_id', $employee->id)->count());
     }
 
-    public function test_already_mixed_employee_still_gets_more_of_a_client_they_hold(): void
+    public function test_refuses_more_than_the_clients_stock_instead_of_giving_fewer(): void
+    {
+        [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
+
+        $this->account($tenant, $manager, $clientA, 50);
+        $this->account($tenant, $manager, $clientA, 40);
+        $this->account($tenant, $manager, $clientB, 30);
+
+        $this->actingAsTenantUser($manager);
+        $this->distribute($clientA, [['employee_id' => $employee->id, 'count' => 3]]);
+
+        $this->assertSame(0, AccountAssignment::where('employee_id', $employee->id)->count());
+    }
+
+    public function test_employee_busy_with_another_client_is_refused(): void
+    {
+        [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
+
+        $this->hold($tenant, $manager, $employee, $clientB);
+        $a = $this->account($tenant, $manager, $clientA, 50);
+
+        $this->actingAsTenantUser($manager);
+        $this->distribute($clientA, [['employee_id' => $employee->id, 'count' => 1]]);
+
+        $this->assertSame('available', $a->fresh()->status);
+    }
+
+    public function test_employee_busy_with_the_same_client_can_get_more(): void
+    {
+        [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
+
+        $this->hold($tenant, $manager, $employee, $clientB, AccountAssignment::STATUS_IN_PROGRESS);
+        $b = $this->account($tenant, $manager, $clientB, 50);
+
+        $this->actingAsTenantUser($manager);
+        $this->distribute($clientB, [['employee_id' => $employee->id, 'count' => 1]]);
+
+        $this->assertSame('assigned', $b->fresh()->status);
+    }
+
+    public function test_already_mixed_employee_can_get_more_of_a_client_they_hold_only(): void
     {
         [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
         $clientC = Client::create(['tenant_id' => $tenant->id, 'name' => 'C']);
 
         // Left holding A and B from before the rule existed.
-        foreach ([$clientA, $clientB] as $client) {
-            $held = $this->account($tenant, $manager, $client, 90);
-            $held->update(['status' => 'assigned']);
-            $this->makeAssignment($tenant, $held, $employee, ['status' => AccountAssignment::STATUS_PENDING]);
-        }
+        $this->hold($tenant, $manager, $employee, $clientA);
+        $this->hold($tenant, $manager, $employee, $clientB);
 
-        // C is oldest, but it would be a third client on the console.
-        $c = $this->account($tenant, $manager, $clientC, 60);
-        $b1 = $this->account($tenant, $manager, $clientB, 50);
-        $a1 = $this->account($tenant, $manager, $clientA, 40);
-        $b2 = $this->account($tenant, $manager, $clientB, 30);
+        $b = $this->account($tenant, $manager, $clientB, 50);
+        $c = $this->account($tenant, $manager, $clientC, 40);
 
         $this->actingAsTenantUser($manager);
-        $this->distribute([['employee_id' => $employee->id, 'count' => 3]]);
+        $this->distribute($clientB, [['employee_id' => $employee->id, 'count' => 1]]);
+        $this->distribute($clientC, [['employee_id' => $employee->id, 'count' => 1]]);
 
-        // Oldest among A/B is B — take only B this round, never C.
-        $this->assertSame('assigned', $b1->fresh()->status);
-        $this->assertSame('assigned', $b2->fresh()->status);
-        $this->assertSame('available', $a1->fresh()->status);
+        $this->assertSame('assigned', $b->fresh()->status);
         $this->assertSame('available', $c->fresh()->status);
-    }
-
-    public function test_bulk_reassign_allows_a_client_the_mixed_employee_already_holds(): void
-    {
-        [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
-
-        foreach ([$clientA, $clientB] as $client) {
-            $held = $this->account($tenant, $manager, $client, 90);
-            $held->update(['status' => 'assigned']);
-            $this->makeAssignment($tenant, $held, $employee, ['status' => AccountAssignment::STATUS_PENDING]);
-        }
-
-        $a = $this->account($tenant, $manager, $clientA, 50);
-
-        $this->actingAsTenantUser($manager);
-
-        Livewire::test(ListAccounts::class)
-            ->set('matchesType', 'activation')
-            ->callTableBulkAction('reassign_bulk', [$a], data: ['mode' => 'single', 'employee_id' => $employee->id]);
-
-        $this->assertSame('assigned', $a->fresh()->status);
     }
 
     public function test_finished_work_frees_the_employee_for_a_new_client(): void
@@ -172,9 +205,26 @@ class DistributeOneClientPerEmployeeTest extends TestCase
         $fresh = $this->account($tenant, $manager, $clientA, 50);
 
         $this->actingAsTenantUser($manager);
-        $this->distribute([['employee_id' => $employee->id, 'count' => 1]]);
+        $this->distribute($clientA, [['employee_id' => $employee->id, 'count' => 1]]);
 
         $this->assertSame('assigned', $fresh->fresh()->status);
+    }
+
+    public function test_bulk_reassign_allows_a_client_the_mixed_employee_already_holds(): void
+    {
+        [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
+
+        $this->hold($tenant, $manager, $employee, $clientA);
+        $this->hold($tenant, $manager, $employee, $clientB);
+        $a = $this->account($tenant, $manager, $clientA, 50);
+
+        $this->actingAsTenantUser($manager);
+
+        Livewire::test(ListAccounts::class)
+            ->set('matchesType', 'activation')
+            ->callTableBulkAction('reassign_bulk', [$a], data: ['mode' => 'single', 'employee_id' => $employee->id]);
+
+        $this->assertSame('assigned', $a->fresh()->status);
     }
 
     public function test_bulk_reassign_refuses_mixed_clients(): void
@@ -197,10 +247,7 @@ class DistributeOneClientPerEmployeeTest extends TestCase
     {
         [$tenant, $manager, , $employee, $clientA, $clientB] = $this->setUpPool();
 
-        $held = $this->account($tenant, $manager, $clientB, 90);
-        $held->update(['status' => 'assigned']);
-        $this->makeAssignment($tenant, $held, $employee, ['status' => AccountAssignment::STATUS_IN_PROGRESS]);
-
+        $this->hold($tenant, $manager, $employee, $clientB, AccountAssignment::STATUS_IN_PROGRESS);
         $a = $this->account($tenant, $manager, $clientA, 50);
 
         $this->actingAsTenantUser($manager);
