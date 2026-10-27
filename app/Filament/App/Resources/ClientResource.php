@@ -17,7 +17,8 @@ use Illuminate\Validation\Rule;
  * External clients whom the owner is providing account activation for.
  * Owner-only — managers/supervisors/employees never need to touch this;
  * the client is metadata attached at upload time and displayed on the
- * End-of-Day handoff page.
+ * End-of-Day handoff page. Everyone below the owner only ever sees a
+ * client's neutral code, never the name.
  */
 class ClientResource extends Resource
 {
@@ -55,6 +56,14 @@ class ClientResource extends Resource
                     ->ignore($record?->id)
                     ->whereNull('deleted_at')),
 
+            Forms\Components\TextInput::make('code')
+                ->label('الرمز')
+                ->helperText('يظهر للمدراء والمشرفين بدل الاسم. اتركه فارغاً ليُعطى رمزاً تلقائياً (C01، C02 …).')
+                ->maxLength(20)
+                ->rule(fn ($record) => Rule::unique('clients', 'code')
+                    ->where(fn ($q) => $q->where('tenant_id', filament()->getTenant()?->id ?? 0))
+                    ->ignore($record?->id)),
+
             Forms\Components\TextInput::make('email')
                 ->label('البريد الإلكتروني')
                 ->email()
@@ -76,6 +85,13 @@ class ClientResource extends Resource
     {
         return $table
             ->columns([
+                Tables\Columns\TextColumn::make('code')
+                    ->label('الرمز')
+                    ->badge()
+                    ->color('primary')
+                    ->searchable()
+                    ->sortable(),
+
                 Tables\Columns\TextColumn::make('name')
                     ->label('الاسم')
                     ->searchable()

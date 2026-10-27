@@ -1306,7 +1306,7 @@ class AccountResource extends Resource
 
     public static function clientLabel(?int $clientId): string
     {
-        return $clientId === null ? 'بدون عميل' : (\App\Models\Client::find($clientId)?->name ?? '#'.$clientId);
+        return \App\Models\Client::labelFor($clientId);
     }
 
     /**
