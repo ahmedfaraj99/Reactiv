@@ -28,6 +28,10 @@ use RuntimeException;
  */
 class ProofImageProcessor
 {
+    private const MAX_EDGE = 1600;
+
+    private const JPEG_QUALITY = 82;
+
     /**
      * Compute the SHA-256 hex hash of the file at $path, then overwrite
      * the file with a watermarked version. Returns the pre-watermark
@@ -86,6 +90,8 @@ class ProofImageProcessor
             return;
         }
 
+        $img = $this->downscale($img);
+
         try {
             $width = imagesx($img);
             $height = imagesy($img);
@@ -112,9 +118,43 @@ class ProofImageProcessor
             // Always write JPEG — normalises format so the reviewer's
             // browser doesn't have to worry about which decoder to use,
             // and keeps file sizes predictable.
-            imagejpeg($img, $path, 88);
+            imagejpeg($img, $path, self::JPEG_QUALITY);
         } finally {
             imagedestroy($img);
         }
+    }
+
+    /**
+     * Phone-camera shots of the TV arrive at 12MP+ (several MB each),
+     * which made opening a proof painfully slow for reviewers. The long
+     * edge is capped at MAX_EDGE — still plenty to read Match Rewards
+     * text — and done BEFORE watermarking so the fixed-size bitmap font
+     * stays legible instead of shrinking with the photo.
+     */
+    private function downscale(\GdImage $img): \GdImage
+    {
+        $width = imagesx($img);
+        $height = imagesy($img);
+        $longEdge = max($width, $height);
+
+        if ($longEdge <= self::MAX_EDGE) {
+            return $img;
+        }
+
+        $ratio = self::MAX_EDGE / $longEdge;
+        $scaled = imagescale(
+            $img,
+            max(1, (int) round($width * $ratio)),
+            max(1, (int) round($height * $ratio)),
+            IMG_BICUBIC,
+        );
+
+        if ($scaled === false) {
+            return $img;
+        }
+
+        imagedestroy($img);
+
+        return $scaled;
     }
 }

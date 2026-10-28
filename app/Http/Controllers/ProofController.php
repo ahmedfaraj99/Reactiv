@@ -25,7 +25,12 @@ class ProofController extends Controller
         // of letting Flysystem throw a 500 from ->response().
         abort_unless(Storage::disk('local')->exists($assignment->proof_path), 404);
 
-        return Storage::disk('local')->response($assignment->proof_path);
+        // A stored proof never changes (a re-upload gets a new path), so
+        // let the reviewer's browser keep it instead of re-downloading on
+        // every open. "private" keeps shared proxies from caching it.
+        return Storage::disk('local')->response($assignment->proof_path, null, [
+            'Cache-Control' => 'private, max-age=604800, immutable',
+        ]);
     }
 
     private function canView(User $user, AccountAssignment $assignment): bool

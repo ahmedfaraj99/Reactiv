@@ -91,4 +91,48 @@ class ProofImageProcessorTest extends TestCase
 
         (new ProofImageProcessor())->process('/no/such/file.jpg', $employee, $assignment);
     }
+
+    public function test_large_camera_photos_are_downscaled_but_keep_their_aspect_ratio(): void
+    {
+        $tenant = $this->makeTenant();
+        $office = $this->makeOffice($tenant);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $office);
+        $account = $this->makeAccount($tenant);
+        $assignment = $this->makeAssignment($tenant, $account, $employee);
+
+        // Tall and narrow so it is over MAX_EDGE yet tiny in memory: the
+        // full suite already runs close to the 128M test memory limit.
+        $img = imagecreatetruecolor(100, 1700);
+        $path = tempnam(sys_get_temp_dir(), 'proof').'.jpg';
+        imagejpeg($img, $path, 90);
+        imagedestroy($img);
+
+        $original = hash_file('sha256', $path);
+        $hash = (new ProofImageProcessor())->process($path, $employee, $assignment);
+
+        [$width, $height] = getimagesize($path);
+        $this->assertSame(94, $width);
+        $this->assertSame(1600, $height);
+        // Duplicate detection still keys on the pristine upload.
+        $this->assertSame($original, $hash);
+
+        @unlink($path);
+    }
+
+    public function test_small_images_are_not_upscaled(): void
+    {
+        $tenant = $this->makeTenant();
+        $office = $this->makeOffice($tenant);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $office);
+        $account = $this->makeAccount($tenant);
+        $assignment = $this->makeAssignment($tenant, $account, $employee);
+
+        $path = $this->makeImagePath();
+        (new ProofImageProcessor())->process($path, $employee, $assignment);
+
+        [$width, $height] = getimagesize($path);
+        $this->assertSame([400, 300], [$width, $height]);
+
+        @unlink($path);
+    }
 }
