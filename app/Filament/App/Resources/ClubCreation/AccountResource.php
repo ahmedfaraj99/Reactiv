@@ -7,6 +7,8 @@ namespace App\Filament\App\Resources\ClubCreation;
 use App\Enums\UserRole;
 use App\Filament\App\Resources\ClubCreation\AccountResource\Pages;
 use App\Models\ClubCreation\Account;
+use DateInterval;
+use DateTimeInterface;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -429,7 +431,12 @@ class AccountResource extends Resource
         foreach ($reader->getSheetIterator() as $sheet) {
             $isFirst = true;
             foreach ($sheet->getRowIterator() as $row) {
-                $cells = array_map(fn ($c) => (string) $c, $row->toArray());
+                // A cell Excel turned into a date reads as blank, so the row
+                // lands in the skipped count instead of crashing the upload.
+                $cells = array_map(
+                    fn ($c) => $c instanceof DateTimeInterface || $c instanceof DateInterval ? '' : (string) $c,
+                    $row->toArray(),
+                );
 
                 if ($isFirst) {
                     $isFirst = false;

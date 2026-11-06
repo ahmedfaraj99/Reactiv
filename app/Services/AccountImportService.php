@@ -8,6 +8,8 @@ use App\Models\Account;
 use App\Models\Client;
 use App\Models\Tenant;
 use App\Models\User;
+use DateInterval;
+use DateTimeInterface;
 use Illuminate\Http\UploadedFile;
 use ParagonIE\ConstantTime\Base32;
 use Illuminate\Support\Facades\DB;
@@ -86,7 +88,7 @@ class AccountImportService
             foreach ($sheet->getRowIterator() as $row) {
                 $rowIndex++;
                 $cells = array_map(
-                    fn ($c) => trim((string) $c->getValue()),
+                    fn ($c) => $this->isDateValue($c->getValue()) ? '' : trim((string) $c->getValue()),
                     $row->getCells(),
                 );
 
@@ -116,6 +118,20 @@ class AccountImportService
                 }
 
                 $data = $this->extract($cells, $headerMap);
+
+                // Excel silently rewrites values like 3-12 into dates. What it
+                // kept may not be the original credential, so ask for a fix
+                // instead of storing something the employee cannot log in with.
+                $dateColumn = $this->firstDateColumn($row->getCells(), $headerMap);
+                if ($dateColumn !== null) {
+                    $failed++;
+                    $errors[] = [
+                        'row'    => $rowIndex,
+                        'reason' => "Excel حوّل قيمة العمود {$dateColumn} إلى تاريخ. نسّق العمود كنص وأعد كتابة القيمة.",
+                        'email'  => $data['email'] !== '' ? $data['email'] : null,
+                    ];
+                    continue;
+                }
 
                 try {
                     $result = $this->save($data, $tenant, $uploader, $manager, $matchesRequired, $batchId, $client);
@@ -175,6 +191,25 @@ class AccountImportService
             $out[$col] = $cells[$i] ?? '';
         }
         return $out;
+    }
+
+    private function isDateValue(mixed $value): bool
+    {
+        return $value instanceof DateTimeInterface || $value instanceof DateInterval;
+    }
+
+    /**
+     * @param  array<int,\OpenSpout\Common\Entity\Cell>  $cells
+     * @param  array<string,int>  $headerMap
+     */
+    private function firstDateColumn(array $cells, array $headerMap): ?string
+    {
+        foreach ($headerMap as $col => $i) {
+            if (isset($cells[$i]) && $this->isDateValue($cells[$i]->getValue())) {
+                return $col;
+            }
+        }
+        return null;
     }
 
     /** @param  list<string>  $cells */
