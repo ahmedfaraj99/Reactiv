@@ -114,18 +114,25 @@ class ClientResource extends Resource
                     ->color('gray')
                     ->sortable(),
 
-                // Counted from the approved assignment, not accounts.status:
-                // archiving flips an activated account to 'retired', and it
-                // must stay in the client's total. Submissions still awaiting
-                // review don't count.
-                Tables\Columns\TextColumn::make('activated_accounts_count')
-                    ->label('الحسابات المفعّلة')
-                    ->counts(['accounts as activated_accounts_count' => fn ($query) => $query->whereHas(
+                self::activatedCountColumn('activated_accounts_count', 'الحسابات المفعّلة', null, 'success'),
+                self::activatedCountColumn('activated_only_count', 'تفعيل فقط', 'activation', 'info'),
+                self::activatedCountColumn('activated_with_matches_count', 'تفعيل + مباريات', 'matches', 'warning'),
+
+                Tables\Columns\TextColumn::make('failed_accounts_count')
+                    ->label('فاشلة حالياً')
+                    ->counts(['accounts as failed_accounts_count' => fn ($query) => $query->whereHas(
                         'assignment',
-                        fn ($assignment) => $assignment->where('status', AccountAssignment::STATUS_COMPLETED),
+                        fn ($assignment) => $assignment->where('status', AccountAssignment::STATUS_FAILED),
                     )])
                     ->badge()
-                    ->color('success')
+                    ->color('danger')
+                    ->sortable(),
+
+                Tables\Columns\TextColumn::make('failed_deleted_count')
+                    ->label('فاشلة محذوفة')
+                    ->tooltip('حسابات فاشلة حُذفت من النظام منذ بدء التسجيل. لا يشمل ما حُذف قبل ذلك.')
+                    ->badge()
+                    ->color('danger')
                     ->sortable(),
 
                 Tables\Columns\TextColumn::make('created_at')
@@ -138,6 +145,28 @@ class ClientResource extends Resource
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make(),
             ]);
+    }
+
+    /**
+     * Counted from the approved assignment, not accounts.status: archiving
+     * flips an activated account to 'retired', and it must stay in the
+     * client's total. Submissions still awaiting review don't count.
+     *
+     * @param  ?string  $matchesType  'activation', 'matches', or null for both
+     */
+    private static function activatedCountColumn(string $name, string $label, ?string $matchesType, string $color): Tables\Columns\TextColumn
+    {
+        return Tables\Columns\TextColumn::make($name)
+            ->label($label)
+            ->counts(["accounts as {$name}" => fn ($query) => $query
+                ->ofMatchesType($matchesType)
+                ->whereHas(
+                    'assignment',
+                    fn ($assignment) => $assignment->where('status', AccountAssignment::STATUS_COMPLETED),
+                )])
+            ->badge()
+            ->color($color)
+            ->sortable();
     }
 
     public static function getPages(): array

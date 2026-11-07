@@ -18,6 +18,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property ?string $email
  * @property ?string $phone
  * @property ?string $notes
+ * @property int     $failed_deleted_count  failed accounts permanently deleted since tracking began
  */
 class Client extends Model
 {

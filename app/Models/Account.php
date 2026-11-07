@@ -103,6 +103,22 @@ class Account extends Model
                     : null;
             }
         });
+
+        // Checked here, not in each delete action, so every permanent-delete
+        // path is covered. The client link and assignment are gone afterwards.
+        static::forceDeleting(function (self $account): void {
+            if ($account->client_id === null) {
+                return;
+            }
+
+            $failed = $account->assignment()
+                ->where('status', AccountAssignment::STATUS_FAILED)
+                ->exists();
+
+            if ($failed) {
+                Client::withTrashed()->whereKey($account->client_id)->increment('failed_deleted_count');
+            }
+        });
     }
 
     /**
