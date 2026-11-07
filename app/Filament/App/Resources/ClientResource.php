@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\App\Resources;
 
 use App\Filament\App\Resources\ClientResource\Pages;
+use App\Models\AccountAssignment;
 use App\Models\Client;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -111,6 +112,20 @@ class ClientResource extends Resource
                     ->counts('accounts')
                     ->badge()
                     ->color('gray')
+                    ->sortable(),
+
+                // Counted from the approved assignment, not accounts.status:
+                // archiving flips an activated account to 'retired', and it
+                // must stay in the client's total. Submissions still awaiting
+                // review don't count.
+                Tables\Columns\TextColumn::make('activated_accounts_count')
+                    ->label('الحسابات المفعّلة')
+                    ->counts(['accounts as activated_accounts_count' => fn ($query) => $query->whereHas(
+                        'assignment',
+                        fn ($assignment) => $assignment->where('status', AccountAssignment::STATUS_COMPLETED),
+                    )])
+                    ->badge()
+                    ->color('success')
                     ->sortable(),
 
                 Tables\Columns\TextColumn::make('created_at')
