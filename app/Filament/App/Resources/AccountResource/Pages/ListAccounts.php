@@ -29,7 +29,12 @@ class ListAccounts extends ListRecords
 
     protected function getTableQuery(): ?Builder
     {
-        return $this->typedQuery();
+        // An email identifies one account: looking it up mustn't come back
+        // empty just because the switch is on the other order type.
+        $searchingByEmail = filled($this->tableSearch)
+            || filled($this->tableFilters['exact_email']['email'] ?? null);
+
+        return $searchingByEmail ? AccountResource::getEloquentQuery() : $this->typedQuery();
     }
 
     public function getMatchesTypeCounts(): array

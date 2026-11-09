@@ -30,7 +30,15 @@
         </p>
     @else
         <div class="rounded-lg bg-gray-50 p-3 text-sm text-gray-700 dark:bg-white/5 dark:text-gray-300">
-            <span class="font-semibold">الموظف:</span> {{ $assignment->employee?->name ?? '—' }}
+            <span class="font-semibold">الموظف:</span> {{ $assignment->employeeWithTrashed?->name ?? '—' }}
+            @if ($assignment->status === \App\Models\AccountAssignment::STATUS_COMPLETED)
+                <span class="mx-2 text-gray-400">•</span>
+                <span class="font-semibold">اعتمده:</span> {{ $assignment->reviewer?->name ?? '—' }}
+            @endif
+            @if ($assignment->proof_path !== null)
+                <span class="mx-2 text-gray-400">•</span>
+                <a href="{{ route('proof.show', $assignment) }}" target="_blank" class="font-semibold text-primary-600 underline dark:text-primary-400">عرض الإثبات</a>
+            @endif
             @if ($totalSeconds !== null && $totalSeconds > 0)
                 <span class="mx-2 text-gray-400">•</span>
                 <span class="font-semibold">إجمالي المدة:</span>

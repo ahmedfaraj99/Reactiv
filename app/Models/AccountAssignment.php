@@ -137,7 +137,13 @@ class AccountAssignment extends Model
 
     public function reviewer(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'reviewed_by');
+        return $this->belongsTo(User::class, 'reviewed_by')->withTrashed();
+    }
+
+    /** For tracing past work back to someone who has since been removed. */
+    public function employeeWithTrashed(): BelongsTo
+    {
+        return $this->employee()->withTrashed();
     }
 
     public function psnTotpAllowance(): int

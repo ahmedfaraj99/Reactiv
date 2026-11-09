@@ -80,7 +80,9 @@ class AccountResource extends Resource
      */
     public static function getEloquentQuery(): Builder
     {
-        $query = parent::getEloquentQuery()->with(['assignment.employee', 'uploader', 'manager']);
+        $query = parent::getEloquentQuery()->with([
+            'assignment.employee', 'assignment.employeeWithTrashed', 'assignment.reviewer', 'uploader', 'manager',
+        ]);
         $u = auth()->user();
 
         if ($u?->isManager()) {
@@ -106,7 +108,15 @@ class AccountResource extends Resource
                     ->formatStateUsing(fn (string $state): string => self::maskEmail($state))
                     ->tooltip('البريد مخفي جزئياً — يُكشف فقط للموظف عند التفعيل')
                     ->badge()
-                    ->color('primary'),
+                    ->color('primary')
+                    // Encrypted at rest, so only a whole address can match.
+                    ->searchable(query: function (Builder $query, string $search): Builder {
+                        $fingerprint = Account::fingerprint($search);
+
+                        return $query->where(fn (Builder $q): Builder => $q
+                            ->where('email_fingerprint', $fingerprint)
+                            ->orWhere('ea_email_fingerprint', $fingerprint));
+                    }),
 
                 Tables\Columns\TextColumn::make('ea_email')
                     ->label('بريد EA')
@@ -144,11 +154,22 @@ class AccountResource extends Resource
                         default           => $state,
                     }),
 
-                Tables\Columns\TextColumn::make('assignment.employee.name')
+                Tables\Columns\TextColumn::make('assignment.employeeWithTrashed.name')
                     ->label('مخصَّص لـ')
                     ->placeholder('—')
                     ->badge()
                     ->color('warning'),
+
+                // reviewed_by is also set by a rejection, so only an approved
+                // assignment names an approver.
+                Tables\Columns\TextColumn::make('approved_by')
+                    ->label('اعتمده')
+                    ->state(fn (Account $record): ?string => $record->assignment?->status === AccountAssignment::STATUS_COMPLETED
+                        ? $record->assignment->reviewer?->name
+                        : null)
+                    ->placeholder('—')
+                    ->badge()
+                    ->color('success'),
 
                 Tables\Columns\TextColumn::make('matches_required')
                     ->label('المباريات المطلوبة')
@@ -173,6 +194,7 @@ class AccountResource extends Resource
                     ->dateTime('Y-m-d H:i')
                     ->sortable(),
             ])
+            ->searchPlaceholder('ابحث بالبريد كاملاً')
             ->headerActions([
                 Tables\Actions\Action::make('downloadTemplate')
                     ->label('تنزيل قالب Excel')
@@ -513,6 +535,19 @@ class AccountResource extends Resource
                             'backup2'      => null,
                         ]);
                     }),
+
+                Tables\Actions\Action::make('activationHistory')
+                    ->label('السجل')
+                    ->icon('heroicon-o-clock')
+                    ->color('info')
+                    ->visible(fn (Account $record): bool => $record->assignment !== null)
+                    ->modalHeading('من فعّل هذا الحساب ومن اعتمده')
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel('إغلاق')
+                    ->modalContent(fn (Account $record) => view(
+                        'filament.app.partials.assignment-timeline',
+                        ['assignment' => $record->assignment],
+                    )),
 
                 // Free-text channel between manager/supervisor and the
                 // employee working the account — shows up read-only on the
