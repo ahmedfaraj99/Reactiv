@@ -24,7 +24,7 @@ class TwoFactorVerifyController
         }
 
         if ($request->session()->has('google2fa.verified_at')) {
-            return redirect()->intended('/admin');
+            return redirect()->intended($user->homeUrl());
         }
 
         return view('auth.two-factor-verify');
@@ -72,6 +72,6 @@ class TwoFactorVerifyController
             'last_login_at' => now(),
         ])->save();
 
-        return redirect()->intended('/admin');
+        return redirect()->intended($user->homeUrl());
     }
 }

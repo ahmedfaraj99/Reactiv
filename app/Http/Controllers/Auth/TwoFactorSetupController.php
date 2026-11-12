@@ -23,7 +23,7 @@ class TwoFactorSetupController
         $user = $request->user();
 
         if ($user->google2fa_enabled) {
-            return redirect()->intended();
+            return redirect()->intended($user->homeUrl());
         }
 
         // Generate a pending secret once per session so refreshing keeps the same QR
@@ -80,7 +80,7 @@ class TwoFactorSetupController
         Session::forget('2fa_pending_secret');
         Session::put('google2fa.verified_at', now()->timestamp);
 
-        return redirect()->intended('/admin');
+        return redirect()->intended($user->homeUrl());
     }
 
     private function renderSvg(string $uri): string

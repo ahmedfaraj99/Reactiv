@@ -208,6 +208,17 @@ class User extends Authenticatable implements FilamentUser, HasTenants
         };
     }
 
+    /**
+     * Where this user lands when there is no intended URL to return to
+     * (e.g. after 2FA). Hard-coding '/admin' sent every tenant user to
+     * the super-admin panel and a 403 — notably when an iPhone double-
+     * submits the 2FA form and the second POST finds intended() empty.
+     */
+    public function homeUrl(): string
+    {
+        return $this->isSuperAdmin() ? '/admin' : '/app';
+    }
+
     // ── Filament multi-tenancy (HasTenants) ─────────────────────────
 
     public function getTenants(Panel $panel): Collection|array
