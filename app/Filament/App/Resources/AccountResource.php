@@ -208,17 +208,24 @@ class AccountResource extends Resource
                                 'email', 'psn_password', 'psn_totp_secret',
                                 'ea_email', 'ea_password', 'ea_totp_secret',
                                 'ea_backup_code_1', 'ea_backup_code_2',
+                                'psn_backup_code_1', 'psn_backup_code_2',
                             ])."\n";
                             // Row 1: EA shares PSN's email and password (both left blank), no backup codes — the common case.
                             echo implode(',', [
                                 'player1@example.com', 'PsnPass!01', 'JBSWY3DPEHPK3PXP',
-                                '', '', 'NB2W45DFOIZA4TZI', '', '',
+                                '', '', 'NB2W45DFOIZA4TZI', '', '', '', '',
                             ])."\n";
                             // Row 2: EA has its own email, password, and backup codes — the exceptional case.
                             echo implode(',', [
                                 'player2@example.com', 'PsnPass!02', 'NB2W45DFOIZA4TZI',
                                 'player2.ea@example.com', 'EaPass!002', 'MFRGGZDFMZTWQ2LK',
-                                'AB12-CD34', 'EF56-GH78',
+                                'AB12-CD34', 'EF56-GH78', 'PS11-2233', 'PS44-5566',
+                            ])."\n";
+                            // Row 3: no PSN 2FA seed — PSN backup codes stand in for it.
+                            echo implode(',', [
+                                'player3@example.com', 'PsnPass!03', '',
+                                '', '', 'MFRGGZDFMZTWQ2LK', '', '',
+                                'PS77-8899', 'PS00-1122',
                             ])."\n";
                         },
                         'قالب_استيراد_الحسابات.csv',
@@ -297,7 +304,7 @@ class AccountResource extends Resource
 
                         Forms\Components\Placeholder::make('help')
                             ->label('الأعمدة المطلوبة')
-                            ->content('email, psn_password, psn_totp_secret, ea_email, ea_password, ea_totp_secret, ea_backup_code_1, ea_backup_code_2 — اترك ea_email أو ea_password فارغاً إن كان EA يستخدم نفس بريد/رمز PSN. أكواد الاحتياط اختيارية، لكن لازم الاثنان معاً أو لا شيء.'),
+                            ->content('email, psn_password, psn_totp_secret, ea_email, ea_password, ea_totp_secret, ea_backup_code_1, ea_backup_code_2, psn_backup_code_1, psn_backup_code_2 — اترك ea_email أو ea_password فارغاً إن كان EA يستخدم نفس بريد/رمز PSN. أكواد الاحتياط (EA و PSN) اختيارية، لكن لازم الاثنان معاً أو لا شيء. يمكن ترك psn_totp_secret أو ea_totp_secret فارغاً إن وُجدت أكواد احتياط لنفس المنصة، وتظهر الأكواد للموظف مباشرة.'),
 
                         // Applied to every account in this batch. All accounts
                         // in a single upload share the same customer's service
@@ -529,8 +536,8 @@ class AccountResource extends Resource
                             'psn_password' => $record->psn_password,
                             'ea_email'     => $record->effectiveEaEmail(),
                             'ea_password'  => $record->effectiveEaPassword(),
-                            'psn_totp'     => $totp->currentCode($record->psn_totp_seed),
-                            'ea_totp'      => $totp->currentCode($record->ea_totp_seed),
+                            'psn_totp'     => $record->hasPsnTotp() ? $totp->currentCode($record->psn_totp_seed) : null,
+                            'ea_totp'      => $record->hasEaTotp() ? $totp->currentCode($record->ea_totp_seed) : null,
                             'backup1'      => null,
                             'backup2'      => null,
                         ]);
@@ -1520,7 +1527,8 @@ class AccountResource extends Resource
         $csv->insertOne([
             'email', 'psn_password', 'psn_totp_secret',
             'ea_email', 'ea_password', 'ea_totp_secret',
-            'ea_backup_code_1', 'ea_backup_code_2', 'سبب_الخطأ', 'العميل',
+            'ea_backup_code_1', 'ea_backup_code_2',
+            'psn_backup_code_1', 'psn_backup_code_2', 'سبب_الخطأ', 'العميل',
             'المباريات_المطلوبة',
         ]);
 
@@ -1528,12 +1536,14 @@ class AccountResource extends Resource
             $csv->insertOne([
                 $account->email,
                 $account->psn_password,
-                $account->psn_totp_seed,
+                $account->psn_totp_seed ?? '',
                 $account->ea_email ?? '',
                 $account->ea_password ?? '',
-                $account->ea_totp_seed,
+                $account->ea_totp_seed ?? '',
                 $account->ea_backup_code_1 ?? '',
                 $account->ea_backup_code_2 ?? '',
+                $account->psn_backup_code_1 ?? '',
+                $account->psn_backup_code_2 ?? '',
                 $account->assignment?->notes ?? '',
                 $account->client?->name ?? '',
                 $account->requiresMatches() ? (string) $account->matches_required : 'تفعيل فقط',

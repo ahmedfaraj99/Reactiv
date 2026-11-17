@@ -30,12 +30,21 @@ class AccountImportService
      * ea_email, ea_password, and both backup code headers must be present,
      * but their per-row values may be left blank — a blank ea_email/
      * ea_password means EA shares the PSN one; backup codes are only
-     * needed sometimes.
+     * needed sometimes. A blank *_totp_secret is accepted when that
+     * platform's backup codes are filled in instead.
      */
     private const COLUMNS = [
         'email', 'psn_password', 'psn_totp_secret',
         'ea_email', 'ea_password', 'ea_totp_secret',
         'ea_backup_code_1', 'ea_backup_code_2',
+    ];
+
+    /**
+     * Recognised when present but not required, so sheets made from the
+     * older template (no PSN backup codes) keep importing unchanged.
+     */
+    private const OPTIONAL_COLUMNS = [
+        'psn_backup_code_1', 'psn_backup_code_2',
     ];
 
     /**
@@ -167,7 +176,8 @@ class AccountImportService
         $map = [];
         foreach ($headers as $i => $h) {
             $normalized = strtolower(trim($h));
-            if (in_array($normalized, self::COLUMNS, true)) {
+            if (in_array($normalized, self::COLUMNS, true)
+                || in_array($normalized, self::OPTIONAL_COLUMNS, true)) {
                 $map[$normalized] = $i;
             }
         }
@@ -248,22 +258,18 @@ class AccountImportService
         // ea_password is optional — blank means EA uses the PSN password.
         $eaPassword = $data['ea_password'] !== '' ? $data['ea_password'] : null;
 
-        $psnSeed = strtoupper(preg_replace('/\s+/', '', $data['psn_totp_secret']) ?? '');
-        if ($psnSeed === '' || ! $this->isValidBase32($psnSeed)) {
-            throw new RuntimeException('psn_totp_secret ليس Base32 صالحاً.');
-        }
-
-        $eaSeed = strtoupper(preg_replace('/\s+/', '', $data['ea_totp_secret']) ?? '');
-        if ($eaSeed === '' || ! $this->isValidBase32($eaSeed)) {
-            throw new RuntimeException('ea_totp_secret ليس Base32 صالحاً.');
-        }
-
         // Backup codes are optional, but only make sense as a pair.
-        $eaBackupCode1 = $data['ea_backup_code_1'] !== '' ? $data['ea_backup_code_1'] : null;
-        $eaBackupCode2 = $data['ea_backup_code_2'] !== '' ? $data['ea_backup_code_2'] : null;
-        if (($eaBackupCode1 === null) !== ($eaBackupCode2 === null)) {
-            throw new RuntimeException('لازم تدخل كود الاحتياط الأول والثاني معاً، أو تترك الاثنين فارغين.');
-        }
+        [$psnBackupCode1, $psnBackupCode2] = $this->backupPair(
+            $data['psn_backup_code_1'] ?? '', $data['psn_backup_code_2'] ?? '', 'PSN',
+        );
+        [$eaBackupCode1, $eaBackupCode2] = $this->backupPair(
+            $data['ea_backup_code_1'], $data['ea_backup_code_2'], 'EA',
+        );
+
+        // Each platform needs a second factor: a 2FA seed, backup codes,
+        // or both. Some accounts arrive with no seed — only backup codes.
+        $psnSeed = $this->seed($data['psn_totp_secret'], 'psn_totp_secret', $psnBackupCode1 !== null, 'PSN');
+        $eaSeed  = $this->seed($data['ea_totp_secret'], 'ea_totp_secret', $eaBackupCode1 !== null, 'EA');
 
         $emailFingerprint = Account::fingerprint($email);
         $eaFingerprint    = $eaEmail !== null ? Account::fingerprint($eaEmail) : null;
@@ -284,7 +290,7 @@ class AccountImportService
         DB::transaction(function () use (
             $email, $psnPassword, $psnSeed, $emailFingerprint,
             $eaEmail, $eaPassword, $eaSeed, $eaFingerprint,
-            $eaBackupCode1, $eaBackupCode2, $matchesRequired, $batchId,
+            $eaBackupCode1, $eaBackupCode2, $psnBackupCode1, $psnBackupCode2, $matchesRequired, $batchId,
             $tenant, $uploader, $manager, $client,
         ): void {
             Account::create([
@@ -293,6 +299,8 @@ class AccountImportService
                 'email_fingerprint'    => $emailFingerprint,
                 'psn_password'         => $psnPassword,
                 'psn_totp_seed'        => $psnSeed,
+                'psn_backup_code_1'    => $psnBackupCode1,
+                'psn_backup_code_2'    => $psnBackupCode2,
                 'ea_email'             => $eaEmail,
                 'ea_email_fingerprint' => $eaFingerprint,
                 'ea_password'          => $eaPassword,
@@ -309,6 +317,33 @@ class AccountImportService
         });
 
         return 'created';
+    }
+
+    /** @return array{0:?string,1:?string} */
+    private function backupPair(string $code1, string $code2, string $platform): array
+    {
+        $code1 = trim($code1) !== '' ? trim($code1) : null;
+        $code2 = trim($code2) !== '' ? trim($code2) : null;
+        if (($code1 === null) !== ($code2 === null)) {
+            throw new RuntimeException("لازم تدخل كود الاحتياط الأول والثاني لـ {$platform} معاً، أو تترك الاثنين فارغين.");
+        }
+        return [$code1, $code2];
+    }
+
+    /** Blank seed is fine only when that platform's backup codes cover it. */
+    private function seed(string $raw, string $column, bool $hasBackupCodes, string $platform): ?string
+    {
+        $seed = strtoupper(preg_replace('/\s+/', '', $raw) ?? '');
+        if ($seed === '') {
+            if ($hasBackupCodes) {
+                return null;
+            }
+            throw new RuntimeException("{$column} فارغ — لازم مفتاح 2FA أو أكواد احتياط {$platform}.");
+        }
+        if (! $this->isValidBase32($seed)) {
+            throw new RuntimeException("{$column} ليس Base32 صالحاً.");
+        }
+        return $seed;
     }
 
     private function isValidBase32(string $s): bool

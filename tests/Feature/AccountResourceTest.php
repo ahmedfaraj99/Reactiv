@@ -112,8 +112,9 @@ class AccountResourceTest extends TestCase
         $this->assertSame([
             'email', 'psn_password', 'psn_totp_secret',
             'ea_email', 'ea_password', 'ea_totp_secret',
-            'ea_backup_code_1', 'ea_backup_code_2', 'سبب_الخطأ',
-        ], array_slice($rows[0], 0, 9));
+            'ea_backup_code_1', 'ea_backup_code_2',
+            'psn_backup_code_1', 'psn_backup_code_2', 'سبب_الخطأ',
+        ], array_slice($rows[0], 0, 11));
 
         // The comma-containing email must round-trip intact as a single
         // quoted field, not get split into extra columns.

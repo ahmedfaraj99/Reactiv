@@ -64,6 +64,8 @@ class Activation extends Page
     public ?string $revealedEaPassword = null;
     public ?string $revealedEaBackupCode1 = null;
     public ?string $revealedEaBackupCode2 = null;
+    public ?string $revealedPsnBackupCode1 = null;
+    public ?string $revealedPsnBackupCode2 = null;
     public bool $credentialsBlockedByWorkHours = false;
 
     /** Set when this isn't the account the employee is locked into. */
@@ -116,9 +118,7 @@ class Activation extends Page
         }
 
         $this->assignment->refresh();
-        $account = $this->assignment->account;
-        $this->revealedEaBackupCode1 = $account->ea_backup_code_1;
-        $this->revealedEaBackupCode2 = $account->ea_backup_code_2;
+        $this->revealBackupCodes($this->assignment->account, approved: true);
 
         Notification::make()
             ->success()
@@ -238,14 +238,13 @@ class Activation extends Page
             $this->revealedEaEmail     = $account->effectiveEaEmail();
             $this->revealedEaPassword  = $account->effectiveEaPassword();
 
-            // Backup codes are a manager-gated fallback for EA TOTP failures
+            // Backup codes are a manager-gated fallback for PSN/EA TOTP failures
             // — never revealed alongside the credentials. Only surfaced
             // after a supervisor/manager approves an explicit request
             // (see requestBackupCodesAction below).
-            if ($this->assignment->ea_backup_codes_approved_at !== null) {
-                $this->revealedEaBackupCode1 = $account->ea_backup_code_1;
-                $this->revealedEaBackupCode2 = $account->ea_backup_code_2;
-            }
+            // Exception: a platform with backup codes and no 2FA seed has
+            // nothing else to offer, so its codes show right away.
+            $this->revealBackupCodes($account, $this->assignment->ea_backup_codes_approved_at !== null);
 
             $this->logAction('reveal_credentials', $account);
 
@@ -315,6 +314,7 @@ class Activation extends Page
             })
             ->icon(fn (): string => $this->assignment->canGeneratePsnTotp() ? 'heroicon-o-shield-check' : 'heroicon-o-paper-airplane')
             ->color(fn (): string => $this->assignment->canGeneratePsnTotp() ? 'primary' : 'warning')
+            ->visible(fn (): bool => $this->assignment->account->hasPsnTotp())
             ->disabled(fn (): bool => $this->isLocked() || $this->hasPendingTotpApproval('psn'))
             ->action(function (TotpService $totp): void {
                 if (! $this->guardSensitiveAction()
@@ -367,6 +367,7 @@ class Activation extends Page
             })
             ->icon(fn (): string => $this->assignment->canGenerateEaTotp() ? 'heroicon-o-shield-check' : 'heroicon-o-paper-airplane')
             ->color(fn (): string => $this->assignment->canGenerateEaTotp() ? 'primary' : 'warning')
+            ->visible(fn (): bool => $this->assignment->account->hasEaTotp())
             ->disabled(fn (): bool => $this->isLocked() || $this->hasPendingTotpApproval('ea'))
             ->action(function (TotpService $totp): void {
                 if (! $this->guardSensitiveAction()
@@ -421,7 +422,7 @@ class Activation extends Page
     }
 
     /**
-     * "طلب Backup Codes" — a manager-gated fallback for when EA TOTP
+     * "طلب Backup Codes" — a manager-gated fallback for when PSN/EA TOTP
      * misbehaves. The employee cannot see the codes on their own; a
      * supervisor or the manager over their office has to evaluate the
      * request and approve it. Same alert-and-approval shape as the
@@ -444,7 +445,7 @@ class Activation extends Page
             ->color(fn (): string => $this->assignment->ea_backup_codes_approved_at !== null
                 ? 'success'
                 : 'warning')
-            ->visible(fn (): bool => $this->assignment->account->hasEaBackupCodes())
+            ->visible(fn (): bool => $this->assignment->account->hasGatedBackupCodes())
             ->disabled(fn (): bool => $this->isLocked()
                 || $this->assignment->ea_backup_codes_approved_at !== null
                 || $this->hasPendingBackupCodesRequest())
@@ -510,8 +511,24 @@ class Activation extends Page
         }
 
         $this->assignment = $fresh;
-        $this->revealedEaBackupCode1 = $fresh->account->ea_backup_code_1;
-        $this->revealedEaBackupCode2 = $fresh->account->ea_backup_code_2;
+        $this->revealBackupCodes($fresh->account, approved: true);
+    }
+
+    /**
+     * Puts each platform's backup codes on the component when the employee
+     * may see them: always when that platform has no 2FA seed (the codes
+     * are its only second factor), otherwise only after approval.
+     */
+    protected function revealBackupCodes(Account $account, bool $approved): void
+    {
+        if ($account->hasPsnBackupCodes() && ($approved || ! $account->hasPsnTotp())) {
+            $this->revealedPsnBackupCode1 = $account->psn_backup_code_1;
+            $this->revealedPsnBackupCode2 = $account->psn_backup_code_2;
+        }
+        if ($account->hasEaBackupCodes() && ($approved || ! $account->hasEaTotp())) {
+            $this->revealedEaBackupCode1 = $account->ea_backup_code_1;
+            $this->revealedEaBackupCode2 = $account->ea_backup_code_2;
+        }
     }
 
     public function hasPendingBackupCodesRequest(): bool

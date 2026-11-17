@@ -20,8 +20,12 @@
 
             <dt class="text-gray-500" dir="rtl">كود التحقق</dt>
             <dd>
-                <code class="select-all font-mono text-lg tracking-widest">{{ $psn_totp['code'] }}</code>
-                <span class="ms-2 text-xs text-gray-500">({{ $psn_totp['remaining'] }}s)</span>
+                @if ($psn_totp !== null)
+                    <code class="select-all font-mono text-lg tracking-widest">{{ $psn_totp['code'] }}</code>
+                    <span class="ms-2 text-xs text-gray-500">({{ $psn_totp['remaining'] }}s)</span>
+                @else
+                    <span class="text-xs text-gray-500" dir="rtl">لا يوجد 2FA — أكواد احتياط</span>
+                @endif
             </dd>
         </dl>
     </section>
@@ -37,8 +41,12 @@
 
             <dt class="text-gray-500" dir="rtl">كود التحقق</dt>
             <dd>
-                <code class="select-all font-mono text-lg tracking-widest">{{ $ea_totp['code'] }}</code>
-                <span class="ms-2 text-xs text-gray-500">({{ $ea_totp['remaining'] }}s)</span>
+                @if ($ea_totp !== null)
+                    <code class="select-all font-mono text-lg tracking-widest">{{ $ea_totp['code'] }}</code>
+                    <span class="ms-2 text-xs text-gray-500">({{ $ea_totp['remaining'] }}s)</span>
+                @else
+                    <span class="text-xs text-gray-500" dir="rtl">لا يوجد 2FA — أكواد احتياط</span>
+                @endif
             </dd>
 
             @if ($backup1 !== null || $backup2 !== null)

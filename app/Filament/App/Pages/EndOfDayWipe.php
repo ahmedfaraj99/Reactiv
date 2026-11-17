@@ -20,8 +20,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  * accounts activated today, then wipe the actual credentials from the DB
  * so a future break-in yields yesterday's history but no live secrets.
  *
- * Only the six credential fields (psn_password, psn_totp_seed,
- * ea_password, ea_totp_seed, ea_backup_code_1, ea_backup_code_2) are
+ * Only the credential fields (psn_password, psn_totp_seed,
+ * psn_backup_code_1/2, ea_password, ea_totp_seed, ea_backup_code_1/2) are
  * nulled — email, timestamps, employee_id, proof screenshots, and every
  * reveal_log/alert stays intact so a customer complaint days later can
  * still be traced back to the exact employee.
@@ -36,10 +36,12 @@ class EndOfDayWipe extends Page
 
     protected static string $view = 'filament.app.pages.end-of-day-wipe';
 
-    /** The six columns the wipe nulls out. Referenced by tests too. */
+    /** The columns the wipe nulls out. Referenced by tests too. */
     public const CREDENTIAL_COLUMNS = [
         'psn_password',
         'psn_totp_seed',
+        'psn_backup_code_1',
+        'psn_backup_code_2',
         'ea_password',
         'ea_totp_seed',
         'ea_backup_code_1',
@@ -75,8 +77,8 @@ class EndOfDayWipe extends Page
             ->where('accounts.tenant_id', $tenantId)
             ->whereNotNull('accounts.client_id')
             ->where('account_assignments.status', AccountAssignment::STATUS_COMPLETED)
-            // Already-wiped accounts have all six credential columns null.
-            // Filtering on psn_password is enough — the wipe always nulls all six together.
+            // Already-wiped accounts have all credential columns null.
+            // Filtering on psn_password is enough — the wipe always nulls them all together.
             ->whereNotNull('accounts.psn_password')
             ->select('accounts.client_id', DB::raw('COUNT(*) AS cnt'))
             ->groupBy('accounts.client_id')

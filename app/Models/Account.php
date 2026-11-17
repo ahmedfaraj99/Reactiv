@@ -23,11 +23,13 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string  $email
  * @property string  $email_fingerprint
  * @property string  $psn_password
- * @property string  $psn_totp_seed
+ * @property ?string $psn_totp_seed
+ * @property ?string $psn_backup_code_1
+ * @property ?string $psn_backup_code_2
  * @property ?string $ea_email
  * @property ?string $ea_email_fingerprint
  * @property ?string $ea_password
- * @property string  $ea_totp_seed
+ * @property ?string $ea_totp_seed
  * @property ?string $ea_backup_code_1
  * @property ?string $ea_backup_code_2
  * @property string  $status
@@ -47,6 +49,7 @@ class Account extends Model
         'psn_password', 'psn_totp_seed',
         'ea_email', 'ea_email_fingerprint', 'ea_password', 'ea_totp_seed',
         'ea_backup_code_1', 'ea_backup_code_2',
+        'psn_backup_code_1', 'psn_backup_code_2',
         'status', 'uploaded_by', 'manager_id', 'client_id', 'activated_at', 'notes',
         'matches_required', 'import_batch_id',
     ];
@@ -54,6 +57,7 @@ class Account extends Model
     protected $hidden = [
         'psn_password', 'psn_totp_seed', 'ea_password', 'ea_totp_seed',
         'ea_backup_code_1', 'ea_backup_code_2',
+        'psn_backup_code_1', 'psn_backup_code_2',
     ];
 
     protected function casts(): array
@@ -67,6 +71,8 @@ class Account extends Model
             'ea_totp_seed'      => 'encrypted',
             'ea_backup_code_1'  => 'encrypted',
             'ea_backup_code_2'  => 'encrypted',
+            'psn_backup_code_1' => 'encrypted',
+            'psn_backup_code_2' => 'encrypted',
             'activated_at'      => 'datetime',
             'matches_required'  => 'integer',
         ];
@@ -146,6 +152,43 @@ class Account extends Model
     public function hasEaBackupCodes(): bool
     {
         return $this->ea_backup_code_1 !== null && $this->ea_backup_code_2 !== null;
+    }
+
+    public function hasPsnBackupCodes(): bool
+    {
+        return $this->psn_backup_code_1 !== null && $this->psn_backup_code_2 !== null;
+    }
+
+    public function hasPsnTotp(): bool
+    {
+        return $this->psn_totp_seed !== null;
+    }
+
+    public function hasEaTotp(): bool
+    {
+        return $this->ea_totp_seed !== null;
+    }
+
+    /**
+     * Backup codes are a manager-gated fallback only while that platform
+     * also has a 2FA seed. When the account came with backup codes and no
+     * seed, the codes ARE the second factor, so the employee sees them
+     * with the rest of the credentials — no approval round-trip.
+     */
+    public function psnBackupCodesNeedApproval(): bool
+    {
+        return $this->hasPsnBackupCodes() && $this->hasPsnTotp();
+    }
+
+    public function eaBackupCodesNeedApproval(): bool
+    {
+        return $this->hasEaBackupCodes() && $this->hasEaTotp();
+    }
+
+    /** True when at least one platform's codes sit behind the approval gate. */
+    public function hasGatedBackupCodes(): bool
+    {
+        return $this->psnBackupCodesNeedApproval() || $this->eaBackupCodesNeedApproval();
     }
 
     /**

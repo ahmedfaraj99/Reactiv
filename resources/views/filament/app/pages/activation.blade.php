@@ -285,6 +285,10 @@
                                     <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">كلمة المرور</p>
                                     @include('filament.app.pages.partials.credential', ['value' => $revealedPsnPassword, 'id' => 'cred-psn-password'])
                                 </div>
+
+                                @if ($assignment->account->hasPsnBackupCodes())
+                                    @include('filament.app.pages.partials.backup-codes', ['label' => 'Backup Codes (PSN)', 'code1' => $revealedPsnBackupCode1, 'code2' => $revealedPsnBackupCode2])
+                                @endif
                             </div>
 
                             <div class="space-y-3 rounded-xl bg-orange-50/50 p-4 ring-1 ring-orange-200 dark:bg-orange-500/5 dark:ring-orange-500/20">
@@ -309,36 +313,21 @@
                                 </div>
 
                                 @if ($assignment->account->hasEaBackupCodes())
-                                    <div>
-                                        <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">Backup Codes (EA)</p>
-                                        @if ($assignment->ea_backup_codes_approved_at !== null)
-                                            {{-- Backup codes are short numeric strings — no
-                                                 chunking, no per-digit color, no read-aloud/bigscreen
-                                                 controls. Just plain selectable numbers, since the
-                                                 employee reads them once when TOTP is unusable and
-                                                 the surrounding decoration only adds noise. --}}
-                                            <div class="grid grid-cols-1 gap-2">
-                                                <code dir="ltr" class="block w-full select-all rounded-lg bg-white px-3 py-2 font-mono text-gray-950 ring-1 ring-inset ring-gray-200 dark:bg-white/5 dark:text-gray-100 dark:ring-white/10">{{ $revealedEaBackupCode1 }}</code>
-                                                <code dir="ltr" class="block w-full select-all rounded-lg bg-white px-3 py-2 font-mono text-gray-950 ring-1 ring-inset ring-gray-200 dark:bg-white/5 dark:text-gray-100 dark:ring-white/10">{{ $revealedEaBackupCode2 }}</code>
-                                            </div>
-                                        @else
-                                            {{-- Poll every 4s ONLY while the request is pending —
-                                                 broadcast is the primary push, this is the safety net
-                                                 for a missed Reverb frame so the codes appear without a
-                                                 manual refresh. Wrapper disappears the moment approval
-                                                 lands (the @else stops matching), so polling stops. --}}
-                                            <div wire:poll.4s="checkBackupCodesApproval">
-                                                <div class="rounded-md border border-dashed border-gray-300 bg-gray-50 p-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                                                    Backup Codes مخفية — اضغط "طلب Backup Codes" أدناه فقط إذا فشل TOTP، وينتظر موافقة المشرف/المدير.
-                                                </div>
-                                                <div class="mt-2">
-                                                    {{ $this->requestBackupCodesAction }}
-                                                </div>
-                                            </div>
-                                        @endif
-                                    </div>
+                                    @include('filament.app.pages.partials.backup-codes', ['label' => 'Backup Codes (EA)', 'code1' => $revealedEaBackupCode1, 'code2' => $revealedEaBackupCode2])
                                 @endif
                             </div>
+
+                            {{-- One request reveals both platforms' gated codes.
+                                 Poll every 4s ONLY while not yet approved —
+                                 broadcast is the primary push, this is the
+                                 safety net for a missed Reverb frame. The
+                                 wrapper disappears once approval lands, so
+                                 polling stops. --}}
+                            @if ($assignment->account->hasGatedBackupCodes() && $assignment->ea_backup_codes_approved_at === null)
+                                <div wire:poll.4s="checkBackupCodesApproval">
+                                    {{ $this->requestBackupCodesAction }}
+                                </div>
+                            @endif
                         </div>
                     @endif
                 </div>
@@ -523,7 +512,9 @@
                                 <span class="text-xs text-gray-500 dark:text-gray-400">{{ $assignment->psn_totp_generations }}/{{ $assignment->psnTotpAllowance() }}</span>
                             </div>
 
-                            @if ($totpCodePsn)
+                            @if (! $assignment->account->hasPsnTotp())
+                                <p class="text-center text-xs font-semibold text-gray-600 dark:text-gray-300">لا يوجد 2FA لهذا الحساب — استخدم Backup Codes (PSN) في بيانات الدخول أعلاه</p>
+                            @elseif ($totpCodePsn)
                                 <p class="select-all text-center font-mono text-3xl font-bold tracking-widest text-blue-900 dark:text-blue-100">{{ $totpCodePsn }}</p>
                                 <p class="text-center text-xs text-gray-500 dark:text-gray-400">صالح لمدة <span data-totp-countdown>{{ $totpSecondsLeft }}</span> ث</p>
                                 <div class="h-1.5 overflow-hidden rounded-full bg-blue-200/70 dark:bg-blue-500/20">
@@ -547,7 +538,9 @@
                                 <span class="text-xs text-gray-500 dark:text-gray-400">{{ $assignment->ea_totp_generations }}/{{ $assignment->eaTotpAllowance() }}</span>
                             </div>
 
-                            @if ($totpCodeEa)
+                            @if (! $assignment->account->hasEaTotp())
+                                <p class="text-center text-xs font-semibold text-gray-600 dark:text-gray-300">لا يوجد 2FA لهذا الحساب — استخدم Backup Codes (EA) في بيانات الدخول أعلاه</p>
+                            @elseif ($totpCodeEa)
                                 <p class="select-all text-center font-mono text-3xl font-bold tracking-widest text-orange-900 dark:text-orange-100">{{ $totpCodeEa }}</p>
                                 <p class="text-center text-xs text-gray-500 dark:text-gray-400">صالح لمدة <span data-totp-countdown>{{ $totpSecondsLeft }}</span> ث</p>
                                 <div class="h-1.5 overflow-hidden rounded-full bg-orange-200/70 dark:bg-orange-500/20">
