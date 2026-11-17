@@ -7,6 +7,7 @@ namespace Tests\Feature;
 use App\Enums\UserRole;
 use App\Filament\App\Resources\AccountResource\Pages\ListAccounts;
 use App\Models\AccountAssignment;
+use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -82,6 +83,62 @@ class AccountActivationTraceTest extends TestCase
             ->mountTableAction('activationHistory', $account)
             ->assertSee('الموظف المنفذ')
             ->assertSee('المشرف المعتمد');
+    }
+
+    public function test_history_shows_the_proof_or_says_why_it_cannot(): void
+    {
+        Storage::fake('local');
+
+        $tenant = $this->makeTenant();
+        $owner = $this->makeUser($tenant, UserRole::TenantOwner);
+        $office = $this->makeOffice($tenant);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $office);
+
+        $make = function (?string $proof) use ($tenant, $employee): array {
+            $account = $this->makeAccount($tenant, ['status' => 'activated']);
+            $assignment = $this->makeAssignment($tenant, $account, $employee, [
+                'status'       => AccountAssignment::STATUS_COMPLETED,
+                'proof_path'   => $proof,
+                'submitted_at' => now(),
+            ]);
+
+            return [$account, $assignment];
+        };
+
+        Storage::disk('local')->put('proofs/here.jpg', 'bytes');
+        [$withProof, $assignment] = $make('proofs/here.jpg');
+        [$fileGone] = $make('proofs/gone.jpg');
+        [$noProof] = $make(null);
+
+        $this->actingAsTenantUser($owner);
+
+        $page = fn () => Livewire::test(ListAccounts::class)->set('matchesType', 'all');
+
+        $page()->mountTableAction('activationHistory', $withProof)
+            ->assertSeeHtml('<img src="'.e(route('proof.show', $assignment)).'"');
+        $page()->mountTableAction('activationHistory', $fileGone)
+            ->assertSee('ملف الإثبات غير موجود على الخادم.');
+        $page()->mountTableAction('activationHistory', $noProof)
+            ->assertSee('لم يُرفع إثبات لهذا التفعيل.');
+    }
+
+    public function test_supervisor_can_still_open_the_proof_of_a_removed_employee(): void
+    {
+        Storage::fake('local');
+        Storage::disk('local')->put('proofs/here.jpg', 'bytes');
+
+        $tenant = $this->makeTenant();
+        $office = $this->makeOffice($tenant);
+        $supervisor = $this->makeUser($tenant, UserRole::Supervisor, $office);
+        $employee = $this->makeUser($tenant, UserRole::Employee, $office);
+        $assignment = $this->makeAssignment($tenant, $this->makeAccount($tenant), $employee, [
+            'status'     => AccountAssignment::STATUS_COMPLETED,
+            'proof_path' => 'proofs/here.jpg',
+        ]);
+
+        $employee->delete();
+
+        $this->actingAs($supervisor)->get(route('proof.show', $assignment))->assertOk();
     }
 
     public function test_a_rejection_does_not_name_an_approver(): void

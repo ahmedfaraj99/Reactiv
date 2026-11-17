@@ -35,10 +35,6 @@
                 <span class="mx-2 text-gray-400">•</span>
                 <span class="font-semibold">اعتمده:</span> {{ $assignment->reviewer?->name ?? '—' }}
             @endif
-            @if ($assignment->proof_path !== null)
-                <span class="mx-2 text-gray-400">•</span>
-                <a href="{{ route('proof.show', $assignment) }}" target="_blank" class="font-semibold text-primary-600 underline dark:text-primary-400">عرض الإثبات</a>
-            @endif
             @if ($totalSeconds !== null && $totalSeconds > 0)
                 <span class="mx-2 text-gray-400">•</span>
                 <span class="font-semibold">إجمالي المدة:</span>
@@ -49,6 +45,16 @@
                 @endif
             @endif
         </div>
+
+        @if ($assignment->proof_path === null)
+            <p class="text-sm text-gray-500 dark:text-gray-400">لم يُرفع إثبات لهذا التفعيل.</p>
+        @elseif (! \Illuminate\Support\Facades\Storage::disk('local')->exists($assignment->proof_path))
+            <p class="text-sm font-semibold text-danger-600 dark:text-danger-400">ملف الإثبات غير موجود على الخادم.</p>
+        @else
+            <a href="{{ route('proof.show', $assignment) }}" target="_blank" title="فتح الصورة بالحجم الكامل">
+                <img src="{{ route('proof.show', $assignment) }}" alt="صورة الإثبات" loading="lazy" class="max-h-96 rounded-lg" />
+            </a>
+        @endif
 
         <ol class="relative space-y-4 border-s-2 border-gray-200 ps-6 dark:border-white/10">
             @foreach ($rows as $i => $row)

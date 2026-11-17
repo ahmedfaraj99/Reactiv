@@ -47,7 +47,7 @@ class ProofController extends Controller
             return true;
         }
 
-        $employee = $assignment->employee;
+        $employee = $assignment->employeeWithTrashed;
         if ($employee === null) {
             return false;
         }
